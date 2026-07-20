@@ -16,13 +16,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-20
+
 ### Added
 
-- added initial `ccswitch` CLI that monitors Claude Code usage and rotates between backup accounts
 - added `enroll` command that captures the logged-in Claude account (credentials + identity) into a local store
-- added `list`, `status`, `use`, and `rotate` commands for inspecting and switching accounts
 - added `ensure` command as a no-network pre-launch guard that installs the current account's credentials
+- added `list`, `status`, `use`, and `rotate` commands for inspecting and switching accounts
 - added `monitor` daemon that polls the Claude usage endpoint and rotates on exhaustion, with `--ensure-daemon` self-start
+- added a warning when `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` would shadow the rotated OAuth credentials
 - added Anthropic usage client (`GET /api/oauth/usage`) and OAuth refresh client for polling backup accounts
 - added atomic, owner-only (0600) persistence for the account store and credentials swaps
-- added a warning when `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` would shadow the rotated OAuth credentials
+- added initial `ccswitch` CLI that monitors Claude Code usage and rotates between backup accounts
+
