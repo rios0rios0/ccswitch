@@ -14,7 +14,7 @@ type Account struct {
 	Credentials  OAuthCredentials `json:"credentials"`
 	Identity     AccountIdentity  `json:"identity"`
 	LastUsage    *Usage           `json:"lastUsage,omitempty"`
-	LastPolledAt time.Time        `json:"lastPolledAt,omitempty"`
+	LastPolledAt time.Time        `json:"lastPolledAt,omitzero"`
 }
 
 // Store is the persisted ccswitch state: the enrolled accounts plus the rotation
