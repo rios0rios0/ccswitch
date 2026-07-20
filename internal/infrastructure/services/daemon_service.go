@@ -75,9 +75,15 @@ func (d *DaemonService) spawn(binary string, args []string) error {
 	}
 	defer func() { _ = logFile.Close() }()
 
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", os.DevNull, err)
+	}
+	defer func() { _ = devNull.Close() }()
+
 	argv := append([]string{binary}, args...)
 	attr := &os.ProcAttr{
-		Files: []*os.File{nil, logFile, logFile},
+		Files: []*os.File{devNull, logFile, logFile},
 		Sys:   &syscall.SysProcAttr{Setsid: true},
 	}
 	proc, err := os.StartProcess(binary, argv, attr)

@@ -16,7 +16,7 @@
 - **Automatic rotation**: when the active account crosses a utilization threshold (default 90%, or a `critical` limit), it swaps in the next healthy backup account.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
-- **Seamless shell integration**: a thin `claude` wrapper keeps the daemon alive and guarantees each launch uses the current account.
+- **Seamless shell integration**: an optional shell wrapper (a few lines shown below) keeps the daemon alive and ensures each `claude` launch uses the current account.
 
 ## How it works
 
@@ -64,6 +64,20 @@ ccswitch monitor --ensure-daemon   # start the daemon in the background if not r
 ### Important
 
 If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set in your environment, Claude Code authenticates with that key and ignores the rotated OAuth credentials. `ccswitch` warns when it detects this.
+
+## Shell integration
+
+`ccswitch` works on its own, but rotation is most seamless when the daemon stays alive and every `claude` launch uses the current account. Add this to your interactive shell config (e.g. `~/.zshrc`):
+
+```bash
+if command -v ccswitch >/dev/null 2>&1; then
+    ccswitch monitor --ensure-daemon 2>/dev/null   # start the daemon if it is not already running
+    claude() {
+        ccswitch ensure --quiet 2>/dev/null          # no-network: install the current account's credentials
+        command claude "$@"
+    }
+fi
+```
 
 ## Architecture
 

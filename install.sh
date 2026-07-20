@@ -102,10 +102,9 @@ parse_args() {
 # Detect operating system
 detect_os() {
     case "$(uname -s)" in
-        Linux*)                   echo "linux" ;;
-        Darwin*)                  echo "darwin" ;;
-        CYGWIN*|MINGW*|MSYS*)    echo "windows" ;;
-        *)  error "Unsupported operating system: $(uname -s)"; exit 1 ;;
+        Linux*)   echo "linux" ;;
+        Darwin*)  echo "darwin" ;;
+        *)  error "Unsupported operating system: $(uname -s). ccswitch requires a Unix-like OS (Linux, WSL, or macOS)."; exit 1 ;;
     esac
 }
 
@@ -167,15 +166,12 @@ get_latest_tag() {
 }
 
 # Build the download URL for a given version, OS, and architecture.
-# GoReleaser naming: {project}-{version}-{os}-{arch}.tar.gz (.zip on Windows)
+# GoReleaser naming: {project}-{version}-{os}-{arch}.tar.gz
 build_download_url() {
     tag="$1"; os="$2"; arch="$3"
     ver=$(echo "$tag" | sed 's/^v//')
 
-    ext="tar.gz"
-    [ "$os" = "windows" ] && ext="zip"
-
-    echo "${GITHUB_RELEASE_BASE}/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag}/${BINARY_NAME}-${ver}-${os}-${arch}.${ext}"
+    echo "${GITHUB_RELEASE_BASE}/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag}/${BINARY_NAME}-${ver}-${os}-${arch}.tar.gz"
 }
 
 # Check if the binary is already installed
@@ -193,7 +189,7 @@ check_existing_installation() {
 
 # Main installation logic
 install_binary() {
-    download_url="$1"; os="$2"; tag="$3"
+    download_url="$1"; tag="$2"
 
     if [ "$DRY_RUN" = "true" ]; then
         info "[DRY RUN] Would download: $download_url"
@@ -218,14 +214,9 @@ install_binary() {
     fi
 
     info "Extracting archive..."
-    if [ "$os" = "windows" ]; then
-        unzip -q -o "$tmp_archive" -d "$tmp_dir"
-    else
-        tar -xzf "$tmp_archive" -C "$tmp_dir"
-    fi
+    tar -xzf "$tmp_archive" -C "$tmp_dir"
 
     src_binary="${tmp_dir}/${BINARY_NAME}"
-    [ "$os" = "windows" ] && src_binary="${src_binary}.exe"
 
     if [ ! -f "$src_binary" ]; then
         rm -f "$tmp_archive"; rm -rf "$tmp_dir"
@@ -292,7 +283,7 @@ main() {
 
     check_existing_installation || exit 0
 
-    install_binary "$download_url" "$os" "$tag"
+    install_binary "$download_url" "$tag"
     verify_installation
 
     info ""
