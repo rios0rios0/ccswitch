@@ -1,0 +1,23 @@
+# Binaries
+/ccswitch
+/bin/
+*.exe
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage.out
+coverage.xml
+cobertura.xml
+*coverage.txt
+junit*.xml
+reports/
