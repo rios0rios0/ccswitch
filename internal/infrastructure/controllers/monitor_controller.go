@@ -82,5 +82,6 @@ func daemonArgs(cfg *entities.Config) []string {
 		"--store", cfg.StorePath,
 		"--credentials", cfg.CredentialsPath,
 		"--claude-json", cfg.ClaudeJSONPath,
+		fmt.Sprintf("--prefer-primary=%t", cfg.PreferPrimary),
 	}
 }

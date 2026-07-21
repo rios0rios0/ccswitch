@@ -13,7 +13,8 @@
 ## Features
 
 - **Usage monitoring**: a background daemon polls the Claude usage endpoint (`/api/oauth/usage`) and knows when the active account is exhausted.
-- **Automatic rotation**: when the active account crosses a utilization threshold (default 90%, or a `critical` limit), it swaps in the next healthy backup account.
+- **Automatic rotation**: when the active account crosses a utilization threshold (default 90%, or a `critical` limit), it swaps in the next account that still has capacity.
+- **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
 - **Seamless shell integration**: an optional shell wrapper (a few lines shown below) keeps the daemon alive and ensures each `claude` launch uses the current account.
@@ -23,6 +24,16 @@
 Claude Code stores its subscription OAuth tokens in `~/.claude/.credentials.json` (under `claudeAiOauth`). `ccswitch` keeps a local store of enrolled accounts and, when the active one is exhausted, atomically rewrites that file with the next account's tokens. Claude Code refreshes the swapped-in access token itself on launch, so no manual login is needed.
 
 Rotation happens at launch boundaries, not mid-conversation: a running session that hits its limit is not hot-switched; you exit and relaunch (optionally `claude --continue`) and the new account is already active.
+
+### Rotation policy
+
+By default (`--prefer-primary`) the monitor always runs on the **highest-priority account that has capacity**. Priority is enrollment order, so the first account you enroll is the primary — check the numbering with `ccswitch list`. It falls back to a backup only while the primary is exhausted, and switches back to the primary as soon as the primary's limits reset.
+
+An exhausted account is held until **every** limit that put it over the threshold has reset — not merely the soonest one. That matters when a short window (the 5-hour session) resets while a long one (the weekly limit) is still saturated: releasing the account early would select it, immediately exhaust it again, and flap.
+
+With `--prefer-primary=false` the monitor instead cycles forward, staying on each account until that account is exhausted and only then advancing.
+
+Because the daemon enforces this policy continuously, `ccswitch use` and `ccswitch rotate` take effect immediately but are not sticky — the next poll returns to whatever the policy selects. To pin an account manually, run with `--prefer-primary=false` or stop the daemon.
 
 ## Installation
 
@@ -58,6 +69,7 @@ ccswitch monitor --ensure-daemon   # start the daemon in the background if not r
 |------------------|---------------------------------------|--------------------------------------------------------|
 | `--threshold`    | `90`                                  | Utilization percent (0-100) that triggers rotation.    |
 | `--interval`     | `5m`                                  | Monitor poll interval.                                 |
+| `--prefer-primary` | `true`                              | Always run on the highest-priority account with capacity, returning to the primary as soon as its limits reset. |
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
 | `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file.                |
 

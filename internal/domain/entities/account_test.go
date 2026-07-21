@@ -82,6 +82,55 @@ func TestStoreNextHealthyAccount(t *testing.T) {
 	})
 }
 
+func TestStorePreferredAccount(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should return the primary when it has capacity", func(t *testing.T) {
+		t.Parallel()
+		// given: sitting on the last account while the primary is healthy
+		store := threeAccountStore()
+		store.Rotation.CurrentEmail = "third@example.com"
+
+		// when
+		preferred, ok := store.PreferredAccount(time.Now())
+
+		// then
+		assert.True(t, ok)
+		assert.Equal(t, "first@example.com", preferred.Email)
+	})
+
+	t.Run("should skip exhausted accounts and return the next highest priority", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		store := threeAccountStore()
+		store.Rotation.MarkExhausted("first@example.com", now.Add(time.Hour))
+
+		// when
+		preferred, ok := store.PreferredAccount(now)
+
+		// then
+		assert.True(t, ok)
+		assert.Equal(t, "second@example.com", preferred.Email)
+	})
+
+	t.Run("should report none when every account is exhausted", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		store := threeAccountStore()
+		for _, email := range []string{"first@example.com", "second@example.com", "third@example.com"} {
+			store.Rotation.MarkExhausted(email, now.Add(time.Hour))
+		}
+
+		// when
+		_, ok := store.PreferredAccount(now)
+
+		// then
+		assert.False(t, ok)
+	})
+}
+
 func TestStoreNextOrder(t *testing.T) {
 	t.Parallel()
 	// given

@@ -57,6 +57,21 @@ func (s *Store) NextOrder() int {
 	return highest + 1
 }
 
+// PreferredAccount returns the highest-priority account that is not exhausted at
+// the given time. Priority is the rotation order, so the first enrolled account
+// is the primary. The boolean is false when every account is exhausted.
+func (s *Store) PreferredAccount(now time.Time) (Account, bool) {
+	ordered := s.Ordered()
+	for i := range ordered {
+		if !s.Rotation.IsExhausted(ordered[i].Email, now) {
+			return ordered[i], true
+		}
+	}
+
+	var none Account
+	return none, false
+}
+
 // NextHealthyAccount returns the next account after the current one, in rotation
 // order, that is not exhausted at the given time. The search wraps around and
 // considers the current account last, so it is returned only when it is the sole

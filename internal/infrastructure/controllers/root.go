@@ -71,6 +71,9 @@ func bindPersistentFlags(root *cobra.Command, cfg *entities.Config) {
 	flags.Float64Var(&cfg.Threshold, "threshold", cfg.Threshold,
 		"utilization percent (0-100) that triggers rotation")
 	flags.DurationVar(&cfg.Interval, "interval", cfg.Interval, "monitor poll interval")
+	flags.BoolVar(&cfg.PreferPrimary, "prefer-primary", cfg.PreferPrimary,
+		"always run on the highest-priority account that has capacity, returning to it "+
+			"as soon as its limits reset (use --prefer-primary=false for round-robin)")
 	flags.StringVar(&cfg.StorePath, "store", cfg.StorePath, "path to the ccswitch account store")
 	flags.StringVar(&cfg.CredentialsPath, "credentials", cfg.CredentialsPath,
 		"path to Claude Code .credentials.json")
@@ -109,6 +112,7 @@ func defaultConfig() *entities.Config {
 		StorePath:       defaultStorePath(home),
 		Threshold:       defaultThreshold,
 		Interval:        defaultInterval,
+		PreferPrimary:   true,
 		UsageBaseURL:    defaultUsageBase,
 		TokenURL:        defaultTokenURL,
 		ClientID:        defaultClientID,

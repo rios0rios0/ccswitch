@@ -18,6 +18,11 @@ type Config struct {
 	Threshold float64
 	// Interval is how often the monitor daemon polls usage.
 	Interval time.Duration
+	// PreferPrimary makes the monitor always run on the highest-priority account
+	// that has capacity, switching back to it as soon as its limits reset. When
+	// false the monitor cycles forward through the accounts instead, staying on
+	// each one until it is exhausted.
+	PreferPrimary bool
 	// UsageBaseURL is the base URL of the Anthropic usage API.
 	UsageBaseURL string
 	// TokenURL is the OAuth token endpoint used to refresh access tokens.
