@@ -137,8 +137,10 @@ func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
 	}
 }
 
-// rotateAway marks the exhausted account and switches to the next healthy one,
-// deferring the on-disk switch when a claude session is running.
+// reconcile records how long the current account stays exhausted and then moves
+// to whichever account the rotation policy selects. The exhaustion window is
+// marked before the selection runs so the current account is excluded from
+// being chosen as its own replacement.
 func (c *MonitorCommand) reconcile(
 	store *entities.Store,
 	current *entities.Account,
