@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	logger "github.com/sirupsen/logrus"
@@ -99,9 +100,7 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 	current.LastUsage = usage
 	current.LastPolledAt = now
 
-	if usage.Exhausted(c.config.Threshold) {
-		c.rotateAway(store, current, usage, now)
-	}
+	c.reconcile(store, current, usage, now)
 	return c.accounts.Save(store)
 }
 
@@ -140,38 +139,94 @@ func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
 
 // rotateAway marks the exhausted account and switches to the next healthy one,
 // deferring the on-disk switch when a claude session is running.
-func (c *MonitorCommand) rotateAway(
+func (c *MonitorCommand) reconcile(
 	store *entities.Store,
 	current *entities.Account,
 	usage *entities.Usage,
 	now time.Time,
 ) {
-	reset := usage.EarliestReset()
-	if reset.IsZero() {
-		reset = now.Add(defaultCooldown)
+	exhausted := usage.Exhausted(c.config.Threshold)
+	if exhausted {
+		recovers := usage.RecoversAt(c.config.Threshold)
+		if recovers.IsZero() {
+			recovers = now.Add(defaultCooldown)
+		}
+		store.Rotation.MarkExhausted(current.Email, recovers)
 	}
-	store.Rotation.MarkExhausted(current.Email, reset)
 
+	target, ok := c.selectTarget(store, current, now, exhausted)
+	if !ok {
+		if exhausted {
+			logger.Warnf("[ccswitch] %s exhausted and no account has capacity; recovers %s",
+				current.Email, formatReset(store.Rotation.ExhaustedUntil[current.Email]))
+		}
+		return
+	}
+	c.switchTo(store, current, &target, usage, exhausted)
+}
+
+// selectTarget returns the account the rotation policy wants active and whether a
+// switch is required. With PreferPrimary the highest-priority account that has
+// capacity always wins, so the monitor returns to the primary as soon as its
+// limits reset. Otherwise the next account is taken only once the current one is
+// exhausted.
+func (c *MonitorCommand) selectTarget(
+	store *entities.Store,
+	current *entities.Account,
+	now time.Time,
+	exhausted bool,
+) (entities.Account, bool) {
+	var none entities.Account
+
+	if c.config.PreferPrimary {
+		preferred, ok := store.PreferredAccount(now)
+		if !ok || preferred.Email == current.Email {
+			return none, false
+		}
+		// While the current account still has capacity, only move to one that
+		// outranks it; never drop to a lower-priority account.
+		if !exhausted && preferred.Order >= current.Order {
+			return none, false
+		}
+		return preferred, true
+	}
+
+	if !exhausted {
+		return none, false
+	}
 	next, ok := store.NextHealthyAccount(now)
 	if !ok || next.Email == current.Email {
-		logger.Warnf("[ccswitch] %s exhausted and no healthy backup; soonest reset %s",
-			current.Email, formatReset(reset))
-		return
+		return none, false
+	}
+	return next, true
+}
+
+// switchTo installs the target account, deferring the on-disk write while a
+// claude session is running so a live process is never swapped underneath.
+func (c *MonitorCommand) switchTo(
+	store *entities.Store,
+	current *entities.Account,
+	target *entities.Account,
+	usage *entities.Usage,
+	exhausted bool,
+) {
+	reason := "higher-priority account recovered"
+	if exhausted {
+		binding, _ := usage.BindingLimit()
+		reason = fmt.Sprintf("%s at %.0f%%", binding.Kind, binding.Percent)
 	}
 
 	if c.sessions != nil && c.sessions.ClaudeRunning() {
-		store.Rotation.CurrentEmail = next.Email
-		logger.Infof("[ccswitch] %s exhausted; will switch to %s on next launch (session active)",
-			current.Email, next.Email)
+		store.Rotation.CurrentEmail = target.Email
+		logger.Infof("[ccswitch] %s -> %s on next launch (%s; session active)",
+			current.Email, target.Email, reason)
 		return
 	}
 
-	if err := c.credentials.Write(&next.Credentials, &next.Identity); err != nil {
-		logger.Warnf("[ccswitch] failed to install %s: %v", next.Email, err)
+	if err := c.credentials.Write(&target.Credentials, &target.Identity); err != nil {
+		logger.Warnf("[ccswitch] failed to install %s: %v", target.Email, err)
 		return
 	}
-	store.Rotation.CurrentEmail = next.Email
-	binding, _ := usage.BindingLimit()
-	logger.Infof("[ccswitch] rotated %s -> %s (%s at %.0f%%)",
-		current.Email, next.Email, binding.Kind, binding.Percent)
+	store.Rotation.CurrentEmail = target.Email
+	logger.Infof("[ccswitch] switched %s -> %s (%s)", current.Email, target.Email, reason)
 }

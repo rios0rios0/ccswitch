@@ -65,17 +65,26 @@ func (u Usage) BindingLimit() (Limit, bool) {
 	return worst, found
 }
 
-// EarliestReset returns the soonest reset time among active limits, or the zero
-// time when there are none.
-func (u Usage) EarliestReset() time.Time {
-	var earliest time.Time
+// RecoversAt returns the time at which every limit that currently exceeds the
+// threshold will have reset, i.e. the earliest moment the account has capacity
+// again. It returns the zero time when nothing is over the threshold.
+//
+// The latest reset is used deliberately: an account is only usable again once
+// all of its exhausted limits have reset. Using the soonest reset would free the
+// account while a longer window (for example the weekly limit) is still
+// saturated, causing it to be selected and immediately exhausted again.
+func (u Usage) RecoversAt(thresholdPercent float64) time.Time {
+	var latest time.Time
 	for _, limit := range u.Limits {
 		if !limit.IsActive {
 			continue
 		}
-		if earliest.IsZero() || limit.ResetsAt.Before(earliest) {
-			earliest = limit.ResetsAt
+		if limit.Severity != SeverityCritical && limit.Percent < thresholdPercent {
+			continue
+		}
+		if limit.ResetsAt.After(latest) {
+			latest = limit.ResetsAt
 		}
 	}
-	return earliest
+	return latest
 }

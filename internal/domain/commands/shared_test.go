@@ -10,6 +10,7 @@ const (
 	thresholdPct = 90.0
 	fullPct      = 100.0
 	lowPct       = 20.0
+	longRecovery = 72 * time.Hour
 )
 
 // validCreds returns a complete credential set for the primary test account.
@@ -36,9 +37,16 @@ func twoAccountStore() *entities.Store {
 	}
 }
 
-// monitorConfig returns a config using the default rotation threshold.
+// monitorConfig returns a config using the default rotation threshold with the
+// prefer-primary policy enabled.
 func monitorConfig() *entities.Config {
-	return &entities.Config{Threshold: thresholdPct}
+	return &entities.Config{Threshold: thresholdPct, PreferPrimary: true}
+}
+
+// roundRobinConfig returns a config that cycles forward through the accounts
+// instead of returning to the primary.
+func roundRobinConfig() *entities.Config {
+	return &entities.Config{Threshold: thresholdPct, PreferPrimary: false}
 }
 
 // exhaustedUsage returns usage whose active scoped limit is fully consumed.

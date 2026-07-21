@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	thresholdPct = 90.0
-	sessionPct   = 56.0
-	weeklyPct    = 93.0
-	scopedPct    = 100.0
+	thresholdPct    = 90.0
+	sessionPct      = 56.0
+	weeklyPct       = 93.0
+	scopedPct       = 100.0
+	longWeeklyReset = 72 * time.Hour
 )
 
 func TestUsageExhausted(t *testing.T) {
@@ -96,20 +97,50 @@ func TestUsageBindingLimit(t *testing.T) {
 	})
 }
 
-func TestUsageEarliestReset(t *testing.T) {
+func TestUsageRecoversAt(t *testing.T) {
 	t.Parallel()
-	// given
-	early := time.Now().Truncate(time.Second)
-	late := early.Add(time.Hour)
-	usage := entities.Usage{Limits: []entities.Limit{
-		{IsActive: true, ResetsAt: late},
-		{IsActive: true, ResetsAt: early},
-		{IsActive: false, ResetsAt: early.Add(-time.Hour)},
-	}}
 
-	// when
-	reset := usage.EarliestReset()
+	t.Run("should return the latest reset among the exhausted limits", func(t *testing.T) {
+		t.Parallel()
+		// given: the session window resets soon, but the saturated weekly window
+		// is what actually keeps the account unusable
+		soon := time.Now().Truncate(time.Second)
+		later := soon.Add(longWeeklyReset)
+		usage := entities.Usage{Limits: []entities.Limit{
+			{Kind: "session", Percent: sessionPct, Severity: entities.SeverityNormal, IsActive: true, ResetsAt: soon},
+			{
+				Kind:     "weekly_scoped",
+				Percent:  scopedPct,
+				Severity: entities.SeverityCritical,
+				IsActive: true,
+				ResetsAt: later,
+			},
+		}}
 
-	// then
-	assert.Equal(t, early, reset)
+		// when
+		recovers := usage.RecoversAt(thresholdPct)
+
+		// then
+		assert.Equal(t, later, recovers)
+	})
+
+	t.Run("should report the zero time when nothing is over the threshold", func(t *testing.T) {
+		t.Parallel()
+		// given
+		usage := entities.Usage{Limits: []entities.Limit{
+			{
+				Kind:     "session",
+				Percent:  sessionPct,
+				Severity: entities.SeverityNormal,
+				IsActive: true,
+				ResetsAt: time.Now(),
+			},
+		}}
+
+		// when
+		recovers := usage.RecoversAt(thresholdPct)
+
+		// then
+		assert.True(t, recovers.IsZero())
+	})
 }
