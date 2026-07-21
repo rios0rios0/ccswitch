@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Changed
+
+- changed the Go version to `1.26.5` and updated all module dependencies
+
 ### Added
 
 - added initial `ccswitch` CLI that monitors Claude Code usage and rotates between backup accounts
