@@ -16,22 +16,25 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-22
+
+### Added
+
+- added `--prefer-primary` (default `true`), which keeps the monitor on the highest-priority account that has capacity and switches back to the primary as soon as its limits reset; `--prefer-primary=false` restores round-robin
+- added `enroll` command that captures the logged-in Claude account (credentials + identity) into a local store
+- added `ensure` command as a no-network pre-launch guard that installs the current account's credentials
+- added `list`, `status`, `use`, and `rotate` commands for inspecting and switching accounts
+- added `monitor` daemon that polls the Claude usage endpoint and rotates on exhaustion, with `--ensure-daemon` self-start
+- added a warning when `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` would shadow the rotated OAuth credentials
+- added Anthropic usage client (`GET /api/oauth/usage`) and OAuth refresh client for polling backup accounts
+- added atomic, owner-only (0600) persistence for the account store and credentials swaps
+- added initial `ccswitch` CLI that monitors Claude Code usage and rotates between backup accounts
+
 ### Changed
 
 - changed the Go version to `1.26.5` and updated all module dependencies
 
-### Added
-
-- added initial `ccswitch` CLI that monitors Claude Code usage and rotates between backup accounts
-- added `enroll` command that captures the logged-in Claude account (credentials + identity) into a local store
-- added `list`, `status`, `use`, and `rotate` commands for inspecting and switching accounts
-- added `ensure` command as a no-network pre-launch guard that installs the current account's credentials
-- added `monitor` daemon that polls the Claude usage endpoint and rotates on exhaustion, with `--ensure-daemon` self-start
-- added Anthropic usage client (`GET /api/oauth/usage`) and OAuth refresh client for polling backup accounts
-- added atomic, owner-only (0600) persistence for the account store and credentials swaps
-- added a warning when `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` would shadow the rotated OAuth credentials
-- added `--prefer-primary` (default `true`), which keeps the monitor on the highest-priority account that has capacity and switches back to the primary as soon as its limits reset; `--prefer-primary=false` restores round-robin
-
 ### Fixed
 
 - fixed exhausted accounts being released after the soonest limit reset rather than the longest, which let an account be reselected while a longer window (such as the weekly limit) was still saturated
+
