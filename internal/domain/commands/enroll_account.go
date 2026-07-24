@@ -34,10 +34,10 @@ func NewEnrollAccountCommand(
 
 // Execute enrolls an account into the store. When token is non-empty it is
 // enrolled directly under email (e.g. a long-lived token from `claude
-// setup-token`), bypassing the Claude Code credentials file entirely; this is
-// the way to recover an account whose interactive session's refresh token has
-// started failing with 401s. Otherwise the currently logged-in account is read
-// from disk, as before. The first enrolled account becomes current.
+// setup-token`), bypassing the Claude Code credentials file entirely; such an
+// account can only be selected manually, because its token lacks the scope the
+// usage endpoint requires. Otherwise the currently logged-in account is read
+// from disk. The first enrolled account becomes current.
 func (c *EnrollAccountCommand) Execute(token, email string) error {
 	creds, identity, err := c.resolve(token, email)
 	if err != nil {
@@ -49,7 +49,9 @@ func (c *EnrollAccountCommand) Execute(token, email string) error {
 	if err != nil {
 		return err
 	}
-	upsertAccount(store, resolvedEmail, identity, creds)
+	// A long-lived token lacks the `user:profile` scope, so its usage can never be
+	// read; record that so the monitor skips polling it instead of failing.
+	upsertAccount(store, resolvedEmail, identity, creds).LongLived = token != ""
 
 	if err = c.accounts.Save(store); err != nil {
 		return err
@@ -57,6 +59,12 @@ func (c *EnrollAccountCommand) Execute(token, email string) error {
 
 	fmt.Fprintf(os.Stdout, "[ccswitch] enrolled %s (%d account(s), current: %s)\n",
 		resolvedEmail, len(store.Accounts), store.Rotation.CurrentEmail)
+	if token != "" {
+		fmt.Fprintf(os.Stdout,
+			"[ccswitch] %s uses a long-lived token: its usage cannot be polled, so it is "+
+				"never rotated to automatically; select it with `ccswitch use %s`\n",
+			resolvedEmail, resolvedEmail)
+	}
 	return nil
 }
 
@@ -92,13 +100,14 @@ func (c *EnrollAccountCommand) resolve(
 }
 
 // upsertAccount inserts or updates the account for the given email, assigning a
-// rotation order to new accounts and setting the first account as current.
+// rotation order to new accounts and setting the first account as current. It
+// returns the stored account so the caller can set enrollment-specific fields.
 func upsertAccount(
 	store *entities.Store,
 	email string,
 	identity *entities.AccountIdentity,
 	creds *entities.OAuthCredentials,
-) {
+) *entities.Account {
 	uuid := ""
 	if identity != nil {
 		uuid = identity.AccountUUID
@@ -110,7 +119,7 @@ func upsertAccount(
 		if identity != nil {
 			existing.Identity = *identity
 		}
-		return
+		return existing
 	}
 
 	account := entities.Account{
@@ -127,4 +136,5 @@ func upsertAccount(
 	if store.Rotation.CurrentEmail == "" {
 		store.Rotation.CurrentEmail = email
 	}
+	return &store.Accounts[len(store.Accounts)-1]
 }

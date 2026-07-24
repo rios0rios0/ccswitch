@@ -23,8 +23,14 @@ func (c OAuthCredentials) AccessTokenExpired(nowMillis int64) bool {
 	return nowMillis >= c.ExpiresAt
 }
 
-// SameAccountAs reports whether two credential sets belong to the same account.
-// The refresh token is compared because it is stable across access-token refreshes.
+// SameAccountAs reports whether two credential sets carry the same refresh token
+// and therefore belong to the same account.
+//
+// This is only a positive signal: the server rotates the refresh token on every
+// refresh, so a false result does NOT mean the credentials belong to different
+// accounts — it may simply mean one side has been refreshed since. Use
+// Store.MatchAccount, which resolves the account by its stable identity, to
+// decide which enrolled account a credential set belongs to.
 func (c OAuthCredentials) SameAccountAs(other OAuthCredentials) bool {
 	return c.RefreshToken != "" && c.RefreshToken == other.RefreshToken
 }

@@ -55,6 +55,13 @@ func (c *StatusCommand) Execute() error {
 
 	fmt.Fprintf(os.Stdout, "current account: %s\n", current.Email)
 
+	if !current.SupportsUsagePolling() {
+		fmt.Fprintln(os.Stdout,
+			"  usage:   not available (enrolled from a long-lived token, which lacks the "+
+				"`user:profile` scope the usage endpoint requires)")
+		return nil
+	}
+
 	usage, _, pollErr := pollUsage(c.usage, c.tokens, &current.Credentials, c.now().UnixMilli())
 	if pollErr != nil {
 		fmt.Fprintf(os.Stderr, "[ccswitch] could not fetch usage: %v\n", pollErr)

@@ -90,6 +90,11 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 		return c.accounts.Save(store)
 	}
 
+	if !current.SupportsUsagePolling() {
+		c.reconcileUnpolled(store, current, now)
+		return c.accounts.Save(store)
+	}
+
 	usage, creds, pollErr := pollUsage(c.usage, c.tokens, &current.Credentials, now.UnixMilli())
 	if pollErr != nil {
 		logger.Warnf("[ccswitch] usage poll for %s failed: %v", current.Email, pollErr)
@@ -120,20 +125,37 @@ func (c *MonitorCommand) resolveCurrent(store *entities.Store) *entities.Account
 
 // syncActiveCredentials captures the on-disk credentials, which Claude Code may
 // have refreshed, back into the matching stored account so backup tokens stay
-// current.
+// current. The account is resolved by identity rather than by refresh token,
+// because the refresh token rotates on every refresh (see Store.MatchAccount).
 func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
 	onDisk, identity, err := c.credentials.Read()
 	if err != nil {
 		return
 	}
-	for i := range store.Accounts {
-		if store.Accounts[i].Credentials.SameAccountAs(*onDisk) {
-			store.Accounts[i].Credentials = *onDisk
-			if identity != nil && identity.EmailAddress != "" {
-				store.Accounts[i].Identity = *identity
-			}
-			return
+	account := store.MatchAccount(*onDisk, identity)
+	if account == nil && !identityKnown(identity) {
+		// With no identity, credentials whose refresh token has already rotated
+		// match nothing, and skipping the capture would leave the store pinned to
+		// the rotated-away token — the 401 loop this sync exists to prevent. The
+		// monitor installs the current account and Claude Code only refreshes it
+		// in place, so attribute them to it.
+		account = store.FindAccount(store.Rotation.CurrentEmail)
+		if account != nil {
+			logger.Debugf("[ccswitch] attributed installed credentials to %s (no identity available)",
+				account.Email)
 		}
+	}
+	if account == nil {
+		return
+	}
+
+	account.Credentials = *onDisk
+	// Credentials carrying a refresh token come from an interactive login and can
+	// be polled again, so an account previously enrolled from a long-lived token
+	// recovers its monitoring as soon as it is logged in normally.
+	account.LongLived = onDisk.RefreshToken == ""
+	if identity != nil && identity.EmailAddress != "" {
+		account.Identity = *identity
 	}
 }
 
@@ -164,7 +186,32 @@ func (c *MonitorCommand) reconcile(
 		}
 		return
 	}
-	c.switchTo(store, current, &target, usage, exhausted)
+	c.switchTo(store, current, &target, switchReason(usage, exhausted))
+}
+
+// reconcileUnpolled applies the rotation policy to a current account whose usage
+// cannot be read. Such an account is never marked exhausted — that needs usage
+// data — so it is only left when the policy prefers a higher-priority account,
+// which is what returns the monitor to the primary once the primary recovers.
+func (c *MonitorCommand) reconcileUnpolled(
+	store *entities.Store,
+	current *entities.Account,
+	now time.Time,
+) {
+	target, ok := c.selectTarget(store, current, now, false)
+	if !ok {
+		return
+	}
+	c.switchTo(store, current, &target, switchReason(nil, false))
+}
+
+// switchReason renders the human-readable cause of a switch.
+func switchReason(usage *entities.Usage, exhausted bool) string {
+	if !exhausted {
+		return "higher-priority account recovered"
+	}
+	binding, _ := usage.BindingLimit()
+	return fmt.Sprintf("%s at %.0f%%", binding.Kind, binding.Percent)
 }
 
 // selectTarget returns the account the rotation policy wants active and whether a
@@ -209,15 +256,8 @@ func (c *MonitorCommand) switchTo(
 	store *entities.Store,
 	current *entities.Account,
 	target *entities.Account,
-	usage *entities.Usage,
-	exhausted bool,
+	reason string,
 ) {
-	reason := "higher-priority account recovered"
-	if exhausted {
-		binding, _ := usage.BindingLimit()
-		reason = fmt.Sprintf("%s at %.0f%%", binding.Kind, binding.Percent)
-	}
-
 	if c.sessions != nil && c.sessions.ClaudeRunning() {
 		store.Rotation.CurrentEmail = target.Email
 		logger.Infof("[ccswitch] %s -> %s on next launch (%s; session active)",

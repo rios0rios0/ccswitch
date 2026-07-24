@@ -121,6 +121,26 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		assert.Empty(t, account.Credentials.RefreshToken)
 		assert.Greater(t, account.Credentials.ExpiresAt, before.UnixMilli())
 		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.True(t, account.LongLived, "the token lacks the scope the usage endpoint needs")
+		assert.False(t, account.SupportsUsagePolling())
+	})
+
+	t.Run("should mark an account enrolled from the credentials file as pollable", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    validCreds(),
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		command := commands.NewEnrollAccountCommand(accounts, credentials)
+
+		// when
+		err := command.Execute("", "")
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, accounts.Store.Accounts[0].SupportsUsagePolling())
 	})
 
 	t.Run("should return an error when --token is given without --email", func(t *testing.T) {

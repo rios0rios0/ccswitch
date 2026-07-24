@@ -37,6 +37,42 @@ func twoAccountStore() *entities.Store {
 	}
 }
 
+// longLivedOnlyStore returns a store holding a single account enrolled from a
+// long-lived token, which carries no refresh token.
+func longLivedOnlyStore() *entities.Store {
+	return &entities.Store{
+		Accounts: []entities.Account{{
+			Email:       "long@example.com",
+			Order:       0,
+			Credentials: entities.OAuthCredentials{AccessToken: "long"},
+			LongLived:   true,
+		}},
+		Rotation: entities.RotationState{CurrentEmail: "long@example.com"},
+	}
+}
+
+// longLivedFallbackStore returns a store whose primary is a normal pollable
+// account and whose backup was enrolled from a long-lived token, with the
+// long-lived one currently selected.
+func longLivedFallbackStore() *entities.Store {
+	return &entities.Store{
+		Accounts: []entities.Account{
+			{
+				Email:       "a@example.com",
+				Order:       0,
+				Credentials: entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			},
+			{
+				Email:       "long@example.com",
+				Order:       1,
+				Credentials: entities.OAuthCredentials{AccessToken: "long"},
+				LongLived:   true,
+			},
+		},
+		Rotation: entities.RotationState{CurrentEmail: "long@example.com"},
+	}
+}
+
 // monitorConfig returns a config using the default rotation threshold with the
 // prefer-primary policy enabled.
 func monitorConfig() *entities.Config {

@@ -25,6 +25,8 @@ Claude Code stores its subscription OAuth tokens in `~/.claude/.credentials.json
 
 Rotation happens at launch boundaries, not mid-conversation: a running session that hits its limit is not hot-switched; you exit and relaunch (optionally `claude --continue`) and the new account is already active.
 
+Enrolled accounts are matched to the credentials on disk by their **identity** (`emailAddress`/`accountUuid` from `~/.claude.json`), never by their refresh token. The server rotates the refresh token on every refresh, so matching on it would stop recognizing the account the first time Claude Code refreshed — leaving the store pinned to a token that has been rotated away, which then fails every refresh with `401`.
+
 ### Rotation policy
 
 By default (`--prefer-primary`) the monitor always runs on the **highest-priority account that has capacity**. Priority is enrollment order, so the first account you enroll is the primary — check the numbering with `ccswitch list`. It falls back to a backup only while the primary is exhausted, and switches back to the primary as soon as the primary's limits reset.
@@ -55,7 +57,7 @@ Download pre-built binaries from the [releases page](https://github.com/rios0rio
 ccswitch enroll                    # capture the currently logged-in Claude account
 # log in as another account with `claude` then `/login`, then:
 ccswitch enroll                    # capture the next account
-ccswitch enroll --token <token> --email <email>   # enroll a long-lived token instead (see below)
+ccswitch enroll --token <token> --email <email>   # enroll a long-lived token (manual fallback only, see below)
 ccswitch list                      # list all accounts with live usage
 ccswitch status                    # show the active account and its usage
 ccswitch use <email>               # manually switch accounts
@@ -76,13 +78,19 @@ ccswitch monitor --ensure-daemon   # start the daemon in the background if not r
 
 ### Long-lived tokens
 
-An account enrolled from an interactive `/login` session carries a refresh token that Claude Code itself rotates. If that refresh token stops working (e.g. `ccswitch monitor` starts logging `usage poll for <email> failed: usage endpoint returned status 401`), regenerate a long-lived token for that account with `claude setup-token` and re-enroll it directly, bypassing the credentials file:
+A token minted by `claude setup-token` can be enrolled directly, without an interactive `/login`:
 
 ```bash
 ccswitch enroll --token <token> --email <email>
 ```
 
-The token is stored and used as-is for usage polling and rotation — no refresh call is ever made for it — so a broken or revoked refresh token can no longer take that account's monitoring down.
+**Such an account cannot be monitored.** `setup-token` mints a token scoped for programmatic inference only — it does not carry the `user:profile` scope that `GET /api/oauth/usage` requires, so polling it returns `403 permission_error`. `ccswitch` therefore never polls a long-lived account and never rotates to it automatically, since it has no way to tell whether the account still has capacity. It is available as a **manual fallback**:
+
+```bash
+ccswitch use <email>     # switch to it deliberately
+```
+
+While a long-lived account is active the monitor keeps applying the rotation policy, so it returns to a normal account as soon as one has capacity again. To make an account monitorable, log in to it with `claude` and `/login` and enroll it normally — `ccswitch` picks the full-scoped credentials back up automatically.
 
 ### Important
 
