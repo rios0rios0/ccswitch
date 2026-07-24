@@ -24,6 +24,19 @@ Clean Architecture with a strict domain / infrastructure split:
 - `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`).
 - `internal/infrastructure/services` — `DaemonService` (pidfile + detached self-exec).
 
+## Invariants
+
+- **Match accounts by identity, never by refresh token.** The server rotates the refresh token on
+  every refresh, so `OAuthCredentials.SameAccountAs` is only a positive signal — a false result does
+  not mean "different account". Use `Store.MatchAccount`, which resolves by `accountUuid`/`email`
+  and falls back to the refresh token only when no identity is available. Getting this wrong pins
+  the store to a rotated-away token (401 on every refresh) and makes `ensure` clobber good
+  credentials with stale ones.
+- **Long-lived tokens (`claude setup-token`) cannot be polled.** They are minted without the
+  `user:profile` scope that `/api/oauth/usage` requires, so they return 403. Such accounts are
+  flagged `LongLived` (and detected by an absent refresh token, which also covers stores written
+  before the flag existed); `Account.SupportsUsagePolling` gates polling and automatic selection.
+
 ## Key external contracts
 
 - Usage: `GET https://api.anthropic.com/api/oauth/usage` with `Authorization: Bearer <accessToken>`

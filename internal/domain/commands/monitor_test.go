@@ -197,6 +197,94 @@ func TestMonitorCommandTick(t *testing.T) {
 		assert.True(t, accounts.Store.Rotation.IsExhausted("a@example.com", now.Add(time.Hour+time.Minute)))
 	})
 
+	t.Run("should capture credentials whose refresh token was rotated on disk", func(t *testing.T) {
+		t.Parallel()
+		// given: disk carries a refreshed pair whose refresh token no longer equals
+		// the stored one, so only the identity can tie it back to the account
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-rotated"},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: the store follows the rotation instead of freezing on a dead token
+		require.NoError(t, err)
+		assert.Equal(t, "a-new", accounts.Store.Accounts[0].Credentials.AccessToken)
+		assert.Equal(t, "ra-rotated", accounts.Store.Accounts[0].Credentials.RefreshToken)
+	})
+
+	t.Run("should not poll usage for an account enrolled from a long-lived token", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: longLivedOnlyStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds: &entities.OAuthCredentials{AccessToken: "long"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: polling it would 403, so it is skipped and the account is kept
+		require.NoError(t, err)
+		assert.Equal(t, 0, usage.FetchCalls)
+		assert.Equal(t, "long@example.com", accounts.Store.Rotation.CurrentEmail)
+	})
+
+	t.Run("should leave a long-lived fallback once a pollable primary is available", func(t *testing.T) {
+		t.Parallel()
+		// given: sitting on the manually selected long-lived account
+		store := longLivedFallbackStore()
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds: &entities.OAuthCredentials{AccessToken: "long"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.Equal(t, 1, credentials.WriteCalls)
+	})
+
+	t.Run("should not rotate onto a long-lived account when the primary is exhausted", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		store := longLivedFallbackStore()
+		store.Rotation.CurrentEmail = "a@example.com"
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: exhaustedUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(now)
+
+		// then: capacity cannot be verified for the long-lived account, so it is not
+		// selected automatically; the user picks it with `ccswitch use`
+		require.NoError(t, err)
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.Equal(t, 0, credentials.WriteCalls)
+		assert.True(t, accounts.Store.Rotation.IsExhausted("a@example.com", now))
+	})
+
 	t.Run("should not poll usage with a stale token when the refresh call fails", func(t *testing.T) {
 		t.Parallel()
 		// given: expired (zero ExpiresAt) credentials and a refresh call that fails,

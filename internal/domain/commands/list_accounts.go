@@ -67,6 +67,12 @@ func (c *ListAccountsCommand) printAccount(account *entities.Account, store *ent
 		state = "exhausted"
 	}
 
+	if !account.SupportsUsagePolling() {
+		fmt.Fprintf(os.Stdout, "%s %d. %-32s [%-9s] long-lived token (usage not pollable; manual only)\n",
+			marker, account.Order, account.Email, state)
+		return
+	}
+
 	usage, _, err := pollUsage(c.usage, c.tokens, &account.Credentials, now.UnixMilli())
 	if err != nil {
 		fmt.Fprintf(os.Stdout, "%s %d. %-32s [%-9s] usage unavailable\n",

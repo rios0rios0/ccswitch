@@ -50,6 +50,28 @@ func TestEnsureActiveCommandExecute(t *testing.T) {
 		assert.Equal(t, 0, credentials.WriteCalls)
 	})
 
+	t.Run("should not overwrite credentials Claude Code refreshed for the same account", func(t *testing.T) {
+		t.Parallel()
+		// given: the store still holds the pre-rotation refresh token for the current
+		// account, while disk carries the freshly refreshed pair for that same account
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-rotated"},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		command := commands.NewEnsureActiveCommand(accounts, credentials)
+
+		// when
+		err := command.Execute(true)
+
+		// then: the fresh credentials survive and are folded back into the store,
+		// instead of being replaced by the stale stored ones
+		require.NoError(t, err)
+		assert.Equal(t, 0, credentials.WriteCalls, "must not clobber refreshed credentials")
+		assert.Equal(t, "a-new", accounts.Store.Accounts[0].Credentials.AccessToken)
+		assert.Equal(t, "ra-rotated", accounts.Store.Accounts[0].Credentials.RefreshToken)
+	})
+
 	t.Run("should be a no-op when nothing is enrolled", func(t *testing.T) {
 		t.Parallel()
 		// given

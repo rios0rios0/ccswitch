@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 	"github.com/rios0rios0/ccswitch/internal/domain/repositories"
 )
 
@@ -40,9 +41,13 @@ func (c *EnsureActiveCommand) Execute(quiet bool) error {
 		return nil
 	}
 
-	if onDisk, _, readErr := c.credentials.Read(); readErr == nil &&
-		onDisk.SameAccountAs(account.Credentials) {
-		return nil
+	// Resolve the installed credentials by identity, not by refresh token: Claude
+	// Code rotates the refresh token on every refresh, and treating a rotated
+	// token as a different account would overwrite freshly refreshed credentials
+	// with the stale stored ones, breaking the very account being launched.
+	onDisk, identity, readErr := c.credentials.Read()
+	if readErr == nil && store.MatchAccount(*onDisk, identity) == account {
+		return c.capture(store, account, onDisk)
 	}
 
 	if err = c.credentials.Write(&account.Credentials, &account.Identity); err != nil {
@@ -53,4 +58,23 @@ func (c *EnsureActiveCommand) Execute(quiet bool) error {
 		fmt.Fprintf(os.Stdout, "[ccswitch] ensured active account: %s\n", account.Email)
 	}
 	return nil
+}
+
+// capture folds credentials that Claude Code refreshed on disk back into the
+// stored account. Without this the store keeps a refresh token that the server
+// has already rotated away, which fails every later refresh with 401; doing it
+// here means the store stays current even when the monitor daemon is not
+// running, since the shell wrapper calls `ensure` on every launch.
+func (c *EnsureActiveCommand) capture(
+	store *entities.Store,
+	account *entities.Account,
+	onDisk *entities.OAuthCredentials,
+) error {
+	if account.Credentials.AccessToken == onDisk.AccessToken &&
+		account.Credentials.RefreshToken == onDisk.RefreshToken {
+		return nil
+	}
+	account.Credentials = *onDisk
+	account.LongLived = onDisk.RefreshToken == ""
+	return c.accounts.Save(store)
 }
