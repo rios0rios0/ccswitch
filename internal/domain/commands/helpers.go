@@ -62,6 +62,12 @@ func warnAPIKeyOverride() {
 	}
 }
 
+// identityKnown reports whether the identity can attribute installed credentials
+// to an enrolled account, treating a nil identity as unknown.
+func identityKnown(identity *entities.AccountIdentity) bool {
+	return identity != nil && identity.Known()
+}
+
 // accountEmail returns the email address from an identity, or empty when unknown.
 func accountEmail(identity *entities.AccountIdentity) string {
 	if identity == nil {

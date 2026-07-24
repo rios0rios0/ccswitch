@@ -72,6 +72,47 @@ func TestEnsureActiveCommandExecute(t *testing.T) {
 		assert.Equal(t, "ra-rotated", accounts.Store.Accounts[0].Credentials.RefreshToken)
 	})
 
+	t.Run("should not overwrite rotated credentials when no identity is available", func(t *testing.T) {
+		t.Parallel()
+		// given: ~/.claude.json is missing, so the credentials cannot be attributed,
+		// and their refresh token has already rotated past the stored one
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-rotated"},
+			Identity: nil,
+		}
+		command := commands.NewEnsureActiveCommand(accounts, credentials)
+
+		// when
+		err := command.Execute(true)
+
+		// then: guessing would destroy the pair Claude Code just refreshed
+		require.NoError(t, err)
+		assert.Equal(t, 0, credentials.WriteCalls,
+			"unattributable credentials must never be overwritten on a guess")
+	})
+
+	t.Run("should still install the current account when another account is recognized", func(t *testing.T) {
+		t.Parallel()
+		// given: no identity, but the refresh token still identifies the backup, so
+		// the installed credentials are known to belong to a different account
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "b", RefreshToken: "rb"},
+			Identity: nil,
+		}
+		command := commands.NewEnsureActiveCommand(accounts, credentials)
+
+		// when
+		err := command.Execute(true)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 1, credentials.WriteCalls)
+		require.NotNil(t, credentials.Written)
+		assert.Equal(t, "ra", credentials.Written.RefreshToken)
+	})
+
 	t.Run("should be a no-op when nothing is enrolled", func(t *testing.T) {
 		t.Parallel()
 		// given

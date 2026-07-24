@@ -133,6 +133,18 @@ func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
 		return
 	}
 	account := store.MatchAccount(*onDisk, identity)
+	if account == nil && !identityKnown(identity) {
+		// With no identity, credentials whose refresh token has already rotated
+		// match nothing, and skipping the capture would leave the store pinned to
+		// the rotated-away token — the 401 loop this sync exists to prevent. The
+		// monitor installs the current account and Claude Code only refreshes it
+		// in place, so attribute them to it.
+		account = store.FindAccount(store.Rotation.CurrentEmail)
+		if account != nil {
+			logger.Debugf("[ccswitch] attributed installed credentials to %s (no identity available)",
+				account.Email)
+		}
+	}
 	if account == nil {
 		return
 	}

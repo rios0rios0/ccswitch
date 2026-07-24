@@ -46,8 +46,18 @@ func (c *EnsureActiveCommand) Execute(quiet bool) error {
 	// token as a different account would overwrite freshly refreshed credentials
 	// with the stale stored ones, breaking the very account being launched.
 	onDisk, identity, readErr := c.credentials.Read()
-	if readErr == nil && store.MatchAccount(*onDisk, identity) == account {
-		return c.capture(store, account, onDisk)
+	if readErr == nil {
+		matched := store.MatchAccount(*onDisk, identity)
+		if matched == account {
+			return c.capture(store, account, onDisk)
+		}
+		// Without a usable identity, credentials whose refresh token has rotated
+		// match nothing — and overwriting on that guess would destroy the pair
+		// Claude Code just refreshed. Leave the file alone; an explicit `use` or
+		// the monitor still switches accounts deliberately.
+		if matched == nil && !identityKnown(identity) {
+			return nil
+		}
 	}
 
 	if err = c.credentials.Write(&account.Credentials, &account.Identity); err != nil {

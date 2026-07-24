@@ -219,6 +219,28 @@ func TestMonitorCommandTick(t *testing.T) {
 		assert.Equal(t, "ra-rotated", accounts.Store.Accounts[0].Credentials.RefreshToken)
 	})
 
+	t.Run("should capture rotated credentials for the current account with no identity", func(t *testing.T) {
+		t.Parallel()
+		// given: ~/.claude.json is missing, so nothing attributes the credentials,
+		// and their refresh token has already rotated past the stored one
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-rotated"},
+			Identity: nil,
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: skipping the capture would pin the store to the rotated-away token
+		require.NoError(t, err)
+		assert.Equal(t, "a-new", accounts.Store.Accounts[0].Credentials.AccessToken)
+		assert.Equal(t, "ra-rotated", accounts.Store.Accounts[0].Credentials.RefreshToken)
+	})
+
 	t.Run("should not poll usage for an account enrolled from a long-lived token", func(t *testing.T) {
 		t.Parallel()
 		// given
