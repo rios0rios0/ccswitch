@@ -55,6 +55,7 @@ Download pre-built binaries from the [releases page](https://github.com/rios0rio
 ccswitch enroll                    # capture the currently logged-in Claude account
 # log in as another account with `claude` then `/login`, then:
 ccswitch enroll                    # capture the next account
+ccswitch enroll --token <token> --email <email>   # enroll a long-lived token instead (see below)
 ccswitch list                      # list all accounts with live usage
 ccswitch status                    # show the active account and its usage
 ccswitch use <email>               # manually switch accounts
@@ -72,6 +73,16 @@ ccswitch monitor --ensure-daemon   # start the daemon in the background if not r
 | `--prefer-primary` | `true`                              | Always run on the highest-priority account with capacity, returning to the primary as soon as its limits reset. |
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
 | `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file.                |
+
+### Long-lived tokens
+
+An account enrolled from an interactive `/login` session carries a refresh token that Claude Code itself rotates. If that refresh token stops working (e.g. `ccswitch monitor` starts logging `usage poll for <email> failed: usage endpoint returned status 401`), regenerate a long-lived token for that account with `claude setup-token` and re-enroll it directly, bypassing the credentials file:
+
+```bash
+ccswitch enroll --token <token> --email <email>
+```
+
+The token is stored and used as-is for usage polling and rotation — no refresh call is ever made for it — so a broken or revoked refresh token can no longer take that account's monitoring down.
 
 ### Important
 

@@ -4,16 +4,24 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 	"github.com/rios0rios0/ccswitch/internal/domain/repositories"
 )
 
-// EnrollAccountCommand captures the currently logged-in Claude account into the
-// ccswitch store so it can take part in rotation.
+// longLivedTokenTTL stamps the assumed lifetime of a token minted by `claude
+// setup-token` for display purposes. It is never used to trigger a refresh: a
+// token enrolled this way carries no refresh token, so pollUsage always uses it
+// as-is (see helpers.go).
+const longLivedTokenTTL = 365 * 24 * time.Hour
+
+// EnrollAccountCommand captures a Claude account into the ccswitch store so it
+// can take part in rotation.
 type EnrollAccountCommand struct {
 	accounts    repositories.AccountsRepository
 	credentials repositories.CredentialsRepository
+	now         func() time.Time
 }
 
 // NewEnrollAccountCommand creates an EnrollAccountCommand.
@@ -21,40 +29,66 @@ func NewEnrollAccountCommand(
 	accounts repositories.AccountsRepository,
 	credentials repositories.CredentialsRepository,
 ) *EnrollAccountCommand {
-	return &EnrollAccountCommand{accounts: accounts, credentials: credentials}
+	return &EnrollAccountCommand{accounts: accounts, credentials: credentials, now: time.Now}
 }
 
-// Execute reads the active Claude credentials, resolves the account email, and
-// upserts the account into the store. The first enrolled account becomes current.
-func (c *EnrollAccountCommand) Execute() error {
-	creds, identity, err := c.credentials.Read()
+// Execute enrolls an account into the store. When token is non-empty it is
+// enrolled directly under email (e.g. a long-lived token from `claude
+// setup-token`), bypassing the Claude Code credentials file entirely; this is
+// the way to recover an account whose interactive session's refresh token has
+// started failing with 401s. Otherwise the currently logged-in account is read
+// from disk, as before. The first enrolled account becomes current.
+func (c *EnrollAccountCommand) Execute(token, email string) error {
+	creds, identity, err := c.resolve(token, email)
 	if err != nil {
-		return fmt.Errorf("failed to read current Claude credentials "+
-			"(run `claude` and `/login` first): %w", err)
+		return err
 	}
-	if !creds.Valid() {
-		return errors.New("current Claude credentials are incomplete; log in with `claude` first")
-	}
-
-	email := accountEmail(identity)
-	if email == "" {
-		return errors.New("could not determine the account email; " +
-			"ensure ~/.claude.json contains an oauthAccount block")
-	}
+	resolvedEmail := accountEmail(identity)
 
 	store, err := c.accounts.Load()
 	if err != nil {
 		return err
 	}
-	upsertAccount(store, email, identity, creds)
+	upsertAccount(store, resolvedEmail, identity, creds)
 
 	if err = c.accounts.Save(store); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stdout, "[ccswitch] enrolled %s (%d account(s), current: %s)\n",
-		email, len(store.Accounts), store.Rotation.CurrentEmail)
+		resolvedEmail, len(store.Accounts), store.Rotation.CurrentEmail)
 	return nil
+}
+
+// resolve returns the credentials and identity to enroll, either built directly
+// from a supplied long-lived token or read from the active Claude Code session.
+func (c *EnrollAccountCommand) resolve(
+	token, email string,
+) (*entities.OAuthCredentials, *entities.AccountIdentity, error) {
+	if token != "" {
+		if email == "" {
+			return nil, nil, errors.New("--email is required when --token is set")
+		}
+		creds := &entities.OAuthCredentials{
+			AccessToken: token,
+			ExpiresAt:   c.now().Add(longLivedTokenTTL).UnixMilli(),
+		}
+		return creds, &entities.AccountIdentity{EmailAddress: email}, nil
+	}
+
+	creds, identity, err := c.credentials.Read()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read current Claude credentials "+
+			"(run `claude` and `/login` first): %w", err)
+	}
+	if !creds.Valid() {
+		return nil, nil, errors.New("current Claude credentials are incomplete; log in with `claude` first")
+	}
+	if accountEmail(identity) == "" {
+		return nil, nil, errors.New("could not determine the account email; " +
+			"ensure ~/.claude.json contains an oauthAccount block")
+	}
+	return creds, identity, nil
 }
 
 // upsertAccount inserts or updates the account for the given email, assigning a

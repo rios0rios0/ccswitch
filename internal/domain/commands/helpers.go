@@ -29,9 +29,11 @@ func pollUsage(
 ) (*entities.Usage, entities.OAuthCredentials, error) {
 	current := *creds
 	if current.AccessTokenExpired(nowMillis) && tokensRepo != nil && current.RefreshToken != "" {
-		if refreshed, err := tokensRepo.Refresh(current.RefreshToken); err == nil {
-			current = *refreshed
+		refreshed, err := tokensRepo.Refresh(current.RefreshToken)
+		if err != nil {
+			return nil, current, fmt.Errorf("failed to refresh access token: %w", err)
 		}
+		current = *refreshed
 	}
 	usage, err := usageRepo.Fetch(current.AccessToken)
 	if err != nil {

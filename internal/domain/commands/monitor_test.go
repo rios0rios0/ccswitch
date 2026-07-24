@@ -196,4 +196,27 @@ func TestMonitorCommandTick(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, accounts.Store.Rotation.IsExhausted("a@example.com", now.Add(time.Hour+time.Minute)))
 	})
+
+	t.Run("should not poll usage with a stale token when the refresh call fails", func(t *testing.T) {
+		t.Parallel()
+		// given: expired (zero ExpiresAt) credentials and a refresh call that fails,
+		// e.g. because the refresh token itself was revoked or expired
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		tokens := &doubles.StubTokensRepository{Err: assert.AnError}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, tokens, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: the tick logs the failure and retries next interval, but must never
+		// call the usage endpoint with the known-stale token
+		require.NoError(t, err)
+		assert.Equal(t, 1, tokens.RefreshCalls)
+		assert.Equal(t, 0, usage.FetchCalls)
+	})
 }

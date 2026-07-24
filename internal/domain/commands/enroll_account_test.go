@@ -2,6 +2,7 @@ package commands_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(accounts, credentials)
 
 		// when
-		err := command.Execute()
+		err := command.Execute("", "")
 
 		// then
 		require.NoError(t, err)
@@ -50,7 +51,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(accounts, credentials)
 
 		// when
-		err := command.Execute()
+		err := command.Execute("", "")
 
 		// then
 		require.NoError(t, err)
@@ -65,7 +66,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(&doubles.InMemoryAccountsRepository{}, credentials)
 
 		// when
-		err := command.Execute()
+		err := command.Execute("", "")
 
 		// then
 		require.Error(t, err)
@@ -81,7 +82,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(&doubles.InMemoryAccountsRepository{}, credentials)
 
 		// when
-		err := command.Execute()
+		err := command.Execute("", "")
 
 		// then
 		require.Error(t, err)
@@ -94,7 +95,42 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(&doubles.InMemoryAccountsRepository{}, credentials)
 
 		// when
-		err := command.Execute()
+		err := command.Execute("", "")
+
+		// then
+		require.Error(t, err)
+	})
+
+	t.Run("should enroll a long-lived token directly without reading the credentials file", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{}
+		credentials := &doubles.StubCredentialsRepository{ReadErr: assert.AnError}
+		command := commands.NewEnrollAccountCommand(accounts, credentials)
+		before := time.Now()
+
+		// when
+		err := command.Execute("setup-token-value", "a@example.com")
+
+		// then
+		require.NoError(t, err)
+		require.Len(t, accounts.Store.Accounts, 1)
+		account := accounts.Store.Accounts[0]
+		assert.Equal(t, "a@example.com", account.Email)
+		assert.Equal(t, "setup-token-value", account.Credentials.AccessToken)
+		assert.Empty(t, account.Credentials.RefreshToken)
+		assert.Greater(t, account.Credentials.ExpiresAt, before.UnixMilli())
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+	})
+
+	t.Run("should return an error when --token is given without --email", func(t *testing.T) {
+		t.Parallel()
+		// given
+		command := commands.NewEnrollAccountCommand(
+			&doubles.InMemoryAccountsRepository{}, &doubles.StubCredentialsRepository{})
+
+		// when
+		err := command.Execute("setup-token-value", "")
 
 		// then
 		require.Error(t, err)

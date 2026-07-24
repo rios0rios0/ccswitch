@@ -12,14 +12,20 @@ import (
 
 // newEnrollCommand builds the `enroll` subcommand.
 func newEnrollCommand(cfg *entities.Config) *cobra.Command {
-	return &cobra.Command{
+	var token, email string
+	cmd := &cobra.Command{
 		Use:   "enroll",
 		Short: "Capture the currently logged-in Claude account into the store",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			deps := newDeps(cfg)
-			return commands.NewEnrollAccountCommand(deps.accounts, deps.credentials).Execute()
+			return commands.NewEnrollAccountCommand(deps.accounts, deps.credentials).Execute(token, email)
 		},
 	}
+	cmd.Flags().StringVar(&token, "token", "",
+		"enroll a long-lived OAuth token directly (e.g. from claude setup-token) instead of "+
+			"reading the Claude Code credentials file; requires --email")
+	cmd.Flags().StringVar(&email, "email", "", "account email to label the token given with --token")
+	return cmd
 }
 
 // newListCommand builds the `list` subcommand.
