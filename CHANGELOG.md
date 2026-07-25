@@ -16,6 +16,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-25
+
 ### Added
 
 - added `--token`/`--email` flags to `enroll`, letting a long-lived token minted by `claude setup-token` be enrolled directly without an interactive `/login`
@@ -26,9 +28,9 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Fixed
 
-- fixed enrolled accounts being matched to the credentials on disk by their refresh token, which the server rotates on every refresh: once Claude Code refreshed, the account stopped being recognized and the store stayed pinned to a refresh token that had been rotated away, failing every later refresh with `401`
 - fixed `ensure` overwriting freshly refreshed credentials with the stale stored ones as a consequence of that mismatch, which could install a dead token on every `claude` launch
 - fixed `pollUsage` silently swallowing a failed token refresh and then polling the usage endpoint with the known-stale access token, which surfaced as a misleading `401` instead of the real refresh failure
+- fixed enrolled accounts being matched to the credentials on disk by their refresh token, which the server rotates on every refresh: once Claude Code refreshed, the account stopped being recognized and the store stayed pinned to a refresh token that had been rotated away, failing every later refresh with `401`
 
 ## [0.1.0] - 2026-07-22
 
