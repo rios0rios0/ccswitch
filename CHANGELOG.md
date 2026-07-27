@@ -18,6 +18,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ### Added
 
+- added `CLAUDE.md` with Claude Code guidance mirroring the existing `.github/copilot-instructions.md`
 - added `--token`/`--email` flags to `enroll`, letting a long-lived token minted by `claude setup-token` be enrolled directly without an interactive `/login`
 
 ### Changed
