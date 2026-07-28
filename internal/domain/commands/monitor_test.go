@@ -246,6 +246,58 @@ func TestMonitorCommandTick(t *testing.T) {
 		assert.Equal(t, "ra-new", credentials.Written.RefreshToken)
 	})
 
+	t.Run("should keep refreshed credentials when the usage call afterwards fails", func(t *testing.T) {
+		t.Parallel()
+		// given: the refresh succeeds -- rotating the token server-side, which cannot
+		// be undone -- and only the usage call that follows it fails
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		tokens := &doubles.StubTokensRepository{
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-new"},
+		}
+		usage := &doubles.StubUsageRepository{Err: assert.AnError}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, tokens, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: dropping the rotated pair would leave both the store and the file on
+		// a token the server has already invalidated
+		require.NoError(t, err)
+		assert.Equal(t, 1, tokens.RefreshCalls)
+		assert.Equal(t, "ra-new", accounts.Store.Accounts[0].Credentials.RefreshToken,
+			"the rotated pair must survive in the store")
+		require.Equal(t, 1, credentials.WriteCalls,
+			"the rotated pair must still reach the credentials file")
+		assert.Equal(t, "ra-new", credentials.Written.RefreshToken)
+	})
+
+	t.Run("should not write credentials when the refresh itself fails", func(t *testing.T) {
+		t.Parallel()
+		// given: nothing was rotated, so there is nothing new to persist or publish
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		tokens := &doubles.StubTokensRepository{Err: assert.AnError}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, tokens, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 0, credentials.WriteCalls)
+		assert.Equal(t, "ra", accounts.Store.Accounts[0].Credentials.RefreshToken)
+	})
+
 	t.Run("should publish refreshed credentials even while a claude session is running", func(t *testing.T) {
 		t.Parallel()
 		// given: a live session, which must not block refreshing the account it is

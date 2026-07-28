@@ -19,6 +19,7 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 ### Fixed
 
 - fixed the monitor logging idle Claude Code sessions out: refreshing an expired access token rotates the refresh token and invalidates the previous one, but the new pair was kept only in the ccswitch store, leaving `~/.claude/.credentials.json` holding a token the server had already killed. Claude Code's next refresh then failed with `invalid_grant` and the session was logged out. Because a refresh only happens once the access token has expired, this hit sessions left idle. The refreshed pair is now written back to the credentials file whenever that file still holds the pair the refresh consumed
+- fixed a successful refresh being discarded when the usage call that follows it failed (for example on a transient network error). The refresh had already rotated the token server-side, so dropping its result left both the store and the credentials file on an invalidated token, failing every later refresh with `invalid_grant`
 
 ## [0.2.0] - 2026-07-27
 

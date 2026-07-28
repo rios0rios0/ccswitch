@@ -99,6 +99,13 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 	usage, creds, pollErr := pollUsage(c.usage, c.tokens, &current.Credentials, now.UnixMilli())
 	if pollErr != nil {
 		logger.Warnf("[ccswitch] usage poll for %s failed: %v", current.Email, pollErr)
+		// A refresh that already succeeded rotated the token server-side and cannot
+		// be undone, so its result is kept even though the usage call failed:
+		// discarding it would strand both the store and the credentials file on a
+		// token the server has already invalidated. When the refresh itself failed,
+		// pollUsage hands back the untouched credentials and both calls are no-ops.
+		current.Credentials = creds
+		c.publishRefreshed(previous, current)
 		return c.accounts.Save(store)
 	}
 
