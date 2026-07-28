@@ -95,9 +95,17 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 		return c.accounts.Save(store)
 	}
 
+	previous := current.Credentials
 	usage, creds, pollErr := pollUsage(c.usage, c.tokens, &current.Credentials, now.UnixMilli())
 	if pollErr != nil {
 		logger.Warnf("[ccswitch] usage poll for %s failed: %v", current.Email, pollErr)
+		// A refresh that already succeeded rotated the token server-side and cannot
+		// be undone, so its result is kept even though the usage call failed:
+		// discarding it would strand both the store and the credentials file on a
+		// token the server has already invalidated. When the refresh itself failed,
+		// pollUsage hands back the untouched credentials and both calls are no-ops.
+		current.Credentials = creds
+		c.publishRefreshed(previous, current)
 		return c.accounts.Save(store)
 	}
 
@@ -105,8 +113,47 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 	current.LastUsage = usage
 	current.LastPolledAt = now
 
+	c.publishRefreshed(previous, current)
 	c.reconcile(store, current, usage, now)
 	return c.accounts.Save(store)
+}
+
+// publishRefreshed writes credentials this tick refreshed back to the credentials
+// file when that file still holds the pair the refresh consumed.
+//
+// The server rotates the refresh token on every refresh and invalidates the
+// previous one, so keeping the new pair only in the store leaves Claude Code
+// holding a token the server has already killed: its next refresh fails with
+// invalid_grant and the session is logged out. Because a refresh only happens
+// once the access token has expired, this bites idle sessions in particular.
+//
+// Publishing the same account's newer tokens is not an account switch, so it is
+// safe while a session is running -- the running-session guard in switchTo exists
+// to avoid swapping a live process onto a different account, which this is not.
+func (c *MonitorCommand) publishRefreshed(previous entities.OAuthCredentials, account *entities.Account) {
+	if account.Credentials.AccessToken == previous.AccessToken &&
+		account.Credentials.RefreshToken == previous.RefreshToken {
+		return
+	}
+
+	onDisk, _, err := c.credentials.Read()
+	if err != nil {
+		return
+	}
+	// Only publish when the file still carries exactly what the refresh consumed.
+	// Anything else means another writer got there first, and its tokens are at
+	// least as fresh as these -- including the case where a different account is
+	// installed, which must not be overwritten here.
+	if onDisk.AccessToken != previous.AccessToken || onDisk.RefreshToken != previous.RefreshToken {
+		return
+	}
+
+	if err = c.credentials.Write(&account.Credentials, &account.Identity); err != nil {
+		logger.Warnf("[ccswitch] failed to publish refreshed credentials for %s: %v",
+			account.Email, err)
+		return
+	}
+	logger.Debugf("[ccswitch] published refreshed credentials for %s", account.Email)
 }
 
 // resolveCurrent returns the current account, defaulting to the first ordered
