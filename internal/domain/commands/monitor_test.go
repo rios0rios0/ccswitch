@@ -219,6 +219,113 @@ func TestMonitorCommandTick(t *testing.T) {
 		assert.Equal(t, "ra-rotated", accounts.Store.Accounts[0].Credentials.RefreshToken)
 	})
 
+	t.Run("should publish refreshed credentials back to the credentials file", func(t *testing.T) {
+		t.Parallel()
+		// given: the stored access token has expired (the idle case), and the file
+		// holds the very pair the refresh is about to consume
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		tokens := &doubles.StubTokensRepository{
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-new"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, tokens, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: leaving the rotated-away token on disk would log Claude Code out
+		require.NoError(t, err)
+		assert.Equal(t, 1, tokens.RefreshCalls)
+		require.Equal(t, 1, credentials.WriteCalls, "the refreshed pair must reach the credentials file")
+		assert.Equal(t, "a-new", credentials.Written.AccessToken)
+		assert.Equal(t, "ra-new", credentials.Written.RefreshToken)
+	})
+
+	t.Run("should publish refreshed credentials even while a claude session is running", func(t *testing.T) {
+		t.Parallel()
+		// given: a live session, which must not block refreshing the account it is
+		// already using -- this is not an account switch
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		tokens := &doubles.StubTokensRepository{
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-new"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(monitorConfig(), accounts, credentials, usage, tokens,
+			&doubles.StubSessionsRepository{Running: true})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		require.Equal(t, 1, credentials.WriteCalls)
+		assert.Equal(t, "ra-new", credentials.Written.RefreshToken)
+	})
+
+	t.Run("should not touch the credentials file when no refresh happened", func(t *testing.T) {
+		t.Parallel()
+		// given: an access token that is still valid, so no refresh is attempted
+		store := twoAccountStore()
+		store.Accounts[0].Credentials.ExpiresAt = time.Now().Add(time.Hour).UnixMilli()
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds: &entities.OAuthCredentials{
+				AccessToken:  "a",
+				RefreshToken: "ra",
+				ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+			},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		tokens := &doubles.StubTokensRepository{}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, tokens, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 0, tokens.RefreshCalls)
+		assert.Equal(t, 0, credentials.WriteCalls)
+	})
+
+	t.Run("should not publish over a different account's installed credentials", func(t *testing.T) {
+		t.Parallel()
+		// given: the monitor polls "a", but the file holds "b" -- refreshing "a" must
+		// not overwrite the credentials the CLI is actually authenticating with
+		store := twoAccountStore()
+		store.Rotation.MarkExhausted("b@example.com", time.Now().Add(longRecovery))
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "b", RefreshToken: "rb"},
+			Identity: &entities.AccountIdentity{EmailAddress: "b@example.com"},
+		}
+		tokens := &doubles.StubTokensRepository{
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-new"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, tokens, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, 1, tokens.RefreshCalls, "the polled account is still refreshed")
+		assert.Equal(t, 0, credentials.WriteCalls, "another account's credentials must be left alone")
+	})
+
 	t.Run("should capture rotated credentials for the current account with no identity", func(t *testing.T) {
 		t.Parallel()
 		// given: ~/.claude.json is missing, so nothing attributes the credentials,

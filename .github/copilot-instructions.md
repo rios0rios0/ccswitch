@@ -36,6 +36,11 @@ Clean Architecture with a strict domain / infrastructure split:
   `user:profile` scope that `/api/oauth/usage` requires, so they return 403. Such accounts are
   flagged `LongLived` (and detected by an absent refresh token, which also covers stores written
   before the flag existed); `Account.SupportsUsagePolling` gates polling and automatic selection.
+- **A refresh must be published back to the credentials file.** ccswitch and Claude Code share one
+  refresh token, and the server rotates it on every refresh — whoever refreshes second with the old
+  token gets `invalid_grant`. Keeping a refreshed pair only in the store therefore logs Claude Code
+  out. `MonitorCommand.publishRefreshed` writes it back whenever the file still holds the pair the
+  refresh consumed; that guard is what keeps it from overwriting a different account's credentials.
 
 ## Key external contracts
 
