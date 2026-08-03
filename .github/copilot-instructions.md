@@ -55,7 +55,7 @@ Clean Architecture with a strict domain / infrastructure split:
 ```bash
 make build   # build to bin/ccswitch
 make lint    # golangci-lint (very strict; see pipelines .golangci.yml)
-make test    # go test with -tags test,unit and integration
+make test    # unit + integration tests (single test: go test ./internal/domain/entities/ -run TestStoreMatchAccount)
 make sast    # security scanners
 ```
 
@@ -63,6 +63,6 @@ make sast    # security scanners
 
 - Logging uses Logrus aliased as `logger`; user-facing output goes to `os.Stdout`/`os.Stderr` with a
   `[ccswitch]` prefix.
-- Unit tests carry **no** build tag and live in external `_test` packages with `// given/when/then`
-  blocks; integration tests use `//go:build integration`. No mocking library — use `test/doubles`.
+- Tests live in external `_test` packages with `// given/when/then` blocks and carry no build tags.
+  No mocking library — use `test/doubles`; HTTP adapters are tested against a real `httptest.NewServer`.
 - All persistence is atomic (temp file + rename) and owner-only (0600).

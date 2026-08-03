@@ -16,6 +16,10 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Changed
+
+- refreshed `.github/copilot-instructions.md` to drop the stale `//go:build integration` test-tag claim, since the codebase carries no build tags, and to note the `httptest`-backed HTTP adapter tests
+
 ## [0.2.1] - 2026-07-28
 
 ### Fixed
