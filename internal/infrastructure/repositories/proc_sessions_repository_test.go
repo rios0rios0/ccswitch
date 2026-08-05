@@ -35,11 +35,39 @@ func TestProcSessionsRepositoryClaudeRunning(t *testing.T) {
 		assert.True(t, running)
 	})
 
+	t.Run("should detect a claude process spelled as a Windows executable", func(t *testing.T) {
+		t.Parallel()
+		// given
+		procRoot := t.TempDir()
+		writeProcEntry(t, procRoot, "4243", "Claude.exe")
+		repo := repositories.NewProcSessionsRepository(procRoot)
+
+		// when
+		running := repo.ClaudeRunning()
+
+		// then
+		assert.True(t, running)
+	})
+
+	t.Run("should report not running for a process merely ending in claude", func(t *testing.T) {
+		t.Parallel()
+		// given
+		procRoot := t.TempDir()
+		writeProcEntry(t, procRoot, "4244", "notclaude")
+		repo := repositories.NewProcSessionsRepository(procRoot)
+
+		// when
+		running := repo.ClaudeRunning()
+
+		// then
+		assert.False(t, running)
+	})
+
 	t.Run("should report not running when no process is named claude", func(t *testing.T) {
 		t.Parallel()
 		// given
 		procRoot := t.TempDir()
-		writeProcEntry(t, procRoot, "4242", "node")
+		writeProcEntry(t, procRoot, "4245", "node")
 		repo := repositories.NewProcSessionsRepository(procRoot)
 
 		// when

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 const (
@@ -16,8 +15,8 @@ const (
 	stateDirPerm = 0o700
 )
 
-// aliveSignal is the no-op signal used to probe whether a process exists.
-const aliveSignal = syscall.Signal(0)
+// Detaching a process and probing whether one is alive have no portable form, so
+// both live in daemon_process_unix.go and daemon_process_windows.go.
 
 // DaemonService supervises the background monitor process using a pidfile.
 type DaemonService struct {
@@ -84,7 +83,7 @@ func (d *DaemonService) spawn(binary string, args []string) error {
 	argv := append([]string{binary}, args...)
 	attr := &os.ProcAttr{
 		Files: []*os.File{devNull, logFile, logFile},
-		Sys:   &syscall.SysProcAttr{Setsid: true},
+		Sys:   detachAttrs(),
 	}
 	proc, err := os.StartProcess(binary, argv, attr)
 	if err != nil {
@@ -130,16 +129,4 @@ func (d *DaemonService) readPid() (int, error) {
 		return 0, fmt.Errorf("invalid pidfile contents: %w", err)
 	}
 	return pid, nil
-}
-
-// processAlive reports whether a process with the given pid currently exists.
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(aliveSignal) == nil
 }
