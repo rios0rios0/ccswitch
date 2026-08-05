@@ -29,14 +29,17 @@ func detachAttrs() *syscall.SysProcAttr {
 // process and cannot distinguish that from a process that genuinely exited with
 // code 259 — the wait has no such ambiguity.
 //
-// A failure to open the process is treated as "not running": the handle is
-// requested with PROCESS_QUERY_INFORMATION, which the pidfile's owner always
-// holds over its own daemon, so the realistic failure is the pid being gone.
+// The handle is opened with SYNCHRONIZE, the one right a wait requires — asking
+// for PROCESS_QUERY_INFORMATION instead makes WaitForSingleObject fail with
+// ERROR_ACCESS_DENIED, which would report a live daemon as dead and start a
+// second one on every launch. A failure to open is treated as "not running":
+// the pidfile's owner always holds this right over its own daemon, so the
+// realistic failure is the pid being gone.
 func processAlive(pid int) bool {
 	if pid <= 0 || pid > math.MaxUint32 {
 		return false
 	}
-	handle, err := syscall.OpenProcess(syscall.PROCESS_QUERY_INFORMATION, false, uint32(pid))
+	handle, err := syscall.OpenProcess(syscall.SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
 		return false
 	}
