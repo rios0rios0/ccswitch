@@ -16,11 +16,13 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-05
+
 ### Added
 
-- added Windows support. The daemon now detaches with `DETACHED_PROCESS` + `CREATE_NEW_PROCESS_GROUP` instead of `setsid`, liveness is probed by waiting on the process handle instead of sending signal 0, and running sessions are found through a ToolHelp32 snapshot instead of `/proc`. Only a natively installed `claude.exe` is detected — an npm installation runs inside `node.exe`, which the process list cannot distinguish from any other Node process
 - added a cross-compile job to the workflow, type-checking all six released OS/arch pairs on every pull request. The shared `go-binary.yaml` does not expose the `cross_compile` input, so platform-specific breakage was reaching delivery unchecked
 - added tests for `DaemonService`, which had none: pidfile lifecycle, liveness reporting, and the guard that keeps `Ensure` from starting a second daemon
+- added Windows support. The daemon now detaches with `DETACHED_PROCESS` + `CREATE_NEW_PROCESS_GROUP` instead of `setsid`, liveness is probed by waiting on the process handle instead of sending signal 0, and running sessions are found through a ToolHelp32 snapshot instead of `/proc`. Only a natively installed `claude.exe` is detected — an npm installation runs inside `node.exe`, which the process list cannot distinguish from any other Node process
 
 ### Fixed
 
