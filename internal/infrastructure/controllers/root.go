@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
+	domain "github.com/rios0rios0/ccswitch/internal/domain/repositories"
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/repositories"
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/services"
 )
@@ -22,7 +23,6 @@ const (
 	defaultClientID  = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	defaultUsageBase = "https://api.anthropic.com"
 	defaultTokenURL  = "https://platform.claude.com/v1/oauth/token" //nolint:gosec // public endpoint, not a secret
-	procRoot         = "/proc"
 	pidFileName      = "monitor.pid"
 	logFileName      = "monitor.log"
 )
@@ -34,7 +34,7 @@ type deps struct {
 	credentials *repositories.FileCredentialsRepository
 	usage       *repositories.AnthropicUsageRepository
 	tokens      *repositories.AnthropicTokensRepository
-	sessions    *repositories.ProcSessionsRepository
+	sessions    domain.SessionsRepository
 	daemon      *services.DaemonService
 }
 
@@ -91,7 +91,7 @@ func newDeps(cfg *entities.Config) *deps {
 		credentials: repositories.NewFileCredentialsRepository(cfg.CredentialsPath, cfg.ClaudeJSONPath),
 		usage:       repositories.NewAnthropicUsageRepository(cfg.UsageBaseURL, nil),
 		tokens:      repositories.NewAnthropicTokensRepository(cfg.TokenURL, cfg.ClientID, nil),
-		sessions:    repositories.NewProcSessionsRepository(procRoot),
+		sessions:    newSessionsRepository(),
 		daemon: services.NewDaemonService(
 			filepath.Join(stateDir, pidFileName),
 			filepath.Join(stateDir, logFileName),

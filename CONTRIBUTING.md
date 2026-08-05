@@ -24,6 +24,7 @@ development practices, refer to the **[Development Guide](https://github.com/rio
    make lint
    make test
    make sast
+   make cross-compile   # required when touching platform-specific code
    ```
 6. Update `CHANGELOG.md` under `[Unreleased]`
 7. Commit following the [commit conventions](https://github.com/rios0rios0/guide/wiki/Git-Flow)
@@ -36,3 +37,6 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 - Infrastructure adapters (`internal/infrastructure`) implement the ports over the filesystem and HTTP.
 - Unit tests use hand-rolled in-memory doubles (`test/doubles`); no mocking library is used. HTTP
   adapters are tested against a real `httptest.NewServer`.
+- OS-specific code belongs in a `_unix.go` / `_windows.go` pair behind a shared, portable function;
+  nothing else may branch on the operating system. Binaries are released for Linux, macOS, and
+  Windows on amd64 and arm64, and a Windows-only compile error breaks the entire release.

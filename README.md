@@ -17,6 +17,7 @@
 - **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
+- **Cross-platform**: Linux, macOS, and Windows, on amd64 and arm64.
 - **Seamless shell integration**: an optional shell wrapper (a few lines shown below) keeps the daemon alive and ensures each `claude` launch uses the current account.
 
 ## How it works
@@ -39,6 +40,8 @@ Because the daemon enforces this policy continuously, `ccswitch use` and `ccswit
 
 ## Installation
 
+Linux, macOS, and Windows are supported, on both amd64 and arm64.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rios0rios0/ccswitch/main/install.sh | sh
 ```
@@ -49,7 +52,14 @@ Or build from source:
 make install    # builds and copies the binary to ~/.local/bin/ccswitch
 ```
 
-Download pre-built binaries from the [releases page](https://github.com/rios0rios0/ccswitch/releases).
+Download pre-built binaries from the [releases page](https://github.com/rios0rios0/ccswitch/releases). The installer script is for Linux and macOS; on Windows, download the `.zip` and put `ccswitch.exe` somewhere on your `PATH`.
+
+### Windows notes
+
+`ccswitch` behaves the same on Windows, with two differences worth knowing:
+
+- **Session detection recognizes `claude.exe` only.** The daemon never rewrites credentials while Claude Code is running, and it identifies a running session by the executable name. A natively installed Claude Code is detected; an npm installation runs the CLI inside `node.exe`, which is indistinguishable from any other Node process, so a session started that way is not seen and credentials may be swapped underneath it. Prefer the native install, or stop the daemon while a session is open.
+- **The store is not owner-only.** On Linux and macOS the account store and credentials are written with `0600`. Windows ignores those bits, so the files inherit the permissions of their parent directory (normally your user profile, which is already restricted to you).
 
 ## Usage
 
@@ -124,9 +134,13 @@ ccswitch/
     │   └── repositories/         # ports: accounts, credentials, usage, tokens, sessions
     └── infrastructure/
         ├── controllers/          # cobra CLI wiring
-        ├── repositories/         # JSON store, Claude credentials file, HTTP usage/token clients, /proc probe
+        ├── repositories/         # JSON store, Claude credentials file, HTTP usage/token clients, session probe
         └── services/             # background daemon supervision
 ```
+
+Anything the operating system does differently lives in a `_unix.go` / `_windows.go` pair: process
+detachment and liveness in `services`, session detection in `repositories` (`/proc` scan versus
+ToolHelp32 snapshot), and the choice between them in `controllers`. Everything else is portable.
 
 ## Development
 

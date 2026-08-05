@@ -4,10 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 )
-
-const claudeProcessName = "claude"
 
 // ProcSessionsRepository detects running Claude Code sessions by scanning a /proc
 // filesystem. It reports false on systems without /proc.
@@ -43,11 +40,11 @@ func (r *ProcSessionsRepository) ClaudeRunning() bool {
 	return false
 }
 
-// commMatches reports whether the process comm name equals "claude".
+// commMatches reports whether the process comm name identifies Claude Code.
 func (r *ProcSessionsRepository) commMatches(pid int) bool {
 	data, err := os.ReadFile(filepath.Join(r.procRoot, strconv.Itoa(pid), "comm"))
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(data)) == claudeProcessName
+	return matchesClaudeProcess(string(data))
 }

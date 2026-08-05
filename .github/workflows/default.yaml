@@ -21,3 +21,40 @@ jobs:
     uses: 'rios0rios0/pipelines/.github/workflows/go-binary.yaml@main'
     with:
       binary_name: 'ccswitch'
+
+  # ccswitch ships binaries for six OS/arch pairs, and platform-specific code
+  # (process detachment, liveness probing, session detection) only fails to
+  # compile on the platform it is written for. The shared `go-binary.yaml` does
+  # not expose the `cross_compile` input that `go.yaml` gates this check behind,
+  # so it is wired here directly: without it, a Windows-only compile error stays
+  # invisible until GoReleaser hits it during delivery — which is exactly how
+  # every release up to 0.2.2 ended up publishing no binaries at all.
+  cross-compile:
+    name: 'code-check > quality:cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})'
+    runs-on: 'ubuntu-latest'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: 'linux'
+            goarch: 'amd64'
+          - goos: 'linux'
+            goarch: 'arm64'
+          - goos: 'darwin'
+            goarch: 'amd64'
+          - goos: 'darwin'
+            goarch: 'arm64'
+          - goos: 'windows'
+            goarch: 'amd64'
+          - goos: 'windows'
+            goarch: 'arm64'
+    steps:
+      # Tracks @main deliberately, like every other reference to the pipelines
+      # repository in this workflow: it is first-party and shared, and pinning a
+      # commit here would freeze this one check while the rest of the pipeline
+      # keeps moving.
+      # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
+      - uses: 'rios0rios0/pipelines/github/golang/stages/10-code-check/cross-compile@main'
+        with:
+          goos: '${{ matrix.goos }}'
+          goarch: '${{ matrix.goarch }}'

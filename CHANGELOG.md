@@ -16,6 +16,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Added
+
+- added Windows support. The daemon now detaches with `DETACHED_PROCESS` + `CREATE_NEW_PROCESS_GROUP` instead of `setsid`, liveness is probed by waiting on the process handle instead of sending signal 0, and running sessions are found through a ToolHelp32 snapshot instead of `/proc`. Only a natively installed `claude.exe` is detected — an npm installation runs inside `node.exe`, which the process list cannot distinguish from any other Node process
+- added a cross-compile job to the workflow, type-checking all six released OS/arch pairs on every pull request. The shared `go-binary.yaml` does not expose the `cross_compile` input, so platform-specific breakage was reaching delivery unchecked
+- added tests for `DaemonService`, which had none: pidfile lifecycle, liveness reporting, and the guard that keeps `Ensure` from starting a second daemon
+
+### Fixed
+
+- fixed the release publishing no binaries at all. `syscall.SysProcAttr.Setsid` does not exist on Windows, so GoReleaser's Windows build failed to compile and aborted the whole release — every version from `0.1.0` to `0.2.2` shipped zero assets, leaving `install.sh` with nothing to download
+
 ## [0.2.2] - 2026-08-04
 
 ### Changed

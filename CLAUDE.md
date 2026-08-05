@@ -15,6 +15,8 @@ active one is exhausted. The next `claude` launch then authenticates as the swap
 - `make test` — unit + integration tests.
 - `make lint` — golangci-lint (strict; config comes from the external `rios0rios0/pipelines` makefiles).
 - `make sast` — security scanners.
+- `make cross-compile` — `go vet` for all six released OS/arch targets; run it after touching
+  anything platform-specific.
 - `make run` — `go run ./cmd/ccswitch`.
 
 Run a single test with the standard toolchain, e.g.
@@ -30,10 +32,15 @@ Clean Architecture; the domain layer must never import infrastructure.
   `rotate`, `ensure`, `monitor`), each constructed from repository ports.
 - `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`).
 - `internal/infrastructure/repositories` — adapters: JSON store, the `.credentials.json` swapper
-  (also patches `oauthAccount` in `~/.claude.json`), HTTP usage/refresh clients, and a `/proc`
-  scanner for a running `claude`.
+  (also patches `oauthAccount` in `~/.claude.json`), HTTP usage/refresh clients, and the session
+  probes (`ProcSessionsRepository` scanning `/proc`, `ToolhelpSessionsRepository` walking a Windows
+  ToolHelp32 snapshot).
 - `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`).
 - `internal/infrastructure/services` — `DaemonService` (pidfile + detached self-exec).
+
+Platform differences are isolated in `_unix.go` / `_windows.go` pairs — `detachAttrs`/`processAlive`
+in `services`, the session adapter in `repositories`, and `newSessionsRepository` (which picks one)
+in `controllers`. Nothing else branches on the OS; keep it that way.
 
 ## Invariants (get these wrong and rotation breaks silently)
 
@@ -43,6 +50,10 @@ Clean Architecture; the domain layer must never import infrastructure.
   the token only when no identity is known). `OAuthCredentials.SameAccountAs` is the token-only
   comparison; do not use it to *reject* a match. Getting this wrong pins the store to a rotated-away
   token (401 on every refresh) and makes `ensure` clobber good credentials with stale ones.
+- **Six targets are released, so platform code must compile for all of them.** `make cross-compile`
+  type-checks linux/darwin/windows × amd64/arm64, and the workflow runs the same matrix on every
+  pull request. Skipping it is how `Setsid` — which does not exist on Windows — reached delivery and
+  left every release up to 0.2.2 with zero published binaries.
 - **Long-lived tokens cannot be polled.** Tokens from `claude setup-token` lack the `user:profile`
   scope that `GET /api/oauth/usage` requires (403), so such accounts are flagged `LongLived` and
   gated by `Account.SupportsUsagePolling`. Never poll them or select them automatically — they are a

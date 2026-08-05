@@ -20,7 +20,8 @@ Clean Architecture with a strict domain / infrastructure split:
 - `internal/infrastructure/repositories` — adapters: `JSONAccountsRepository` (atomic 0600 store),
   `FileCredentialsRepository` (swaps `.credentials.json`, patches `oauthAccount` in `~/.claude.json`),
   `AnthropicUsageRepository` (`GET /api/oauth/usage`), `AnthropicTokensRepository` (OAuth refresh),
-  `ProcSessionsRepository` (scans `/proc` for a running `claude`).
+  `ProcSessionsRepository` (scans `/proc` for a running `claude`), `ToolhelpSessionsRepository`
+  (walks a Windows ToolHelp32 snapshot for `claude.exe`).
 - `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`).
 - `internal/infrastructure/services` — `DaemonService` (pidfile + detached self-exec).
 
@@ -32,6 +33,12 @@ Clean Architecture with a strict domain / infrastructure split:
   and falls back to the refresh token only when no identity is available. Getting this wrong pins
   the store to a rotated-away token (401 on every refresh) and makes `ensure` clobber good
   credentials with stale ones.
+- **Six targets are released, so platform code must compile for all of them.** OS-specific code
+  lives in `_unix.go` / `_windows.go` pairs (`detachAttrs`/`processAlive` in `services`, the session
+  adapter in `repositories`, `newSessionsRepository` in `controllers`); nothing else branches on the
+  OS. `make cross-compile` type-checks linux/darwin/windows × amd64/arm64 and the workflow runs the
+  same matrix per pull request — skipping it is how `Setsid` (absent on Windows) reached delivery
+  and left every release up to 0.2.2 with zero published binaries.
 - **Long-lived tokens (`claude setup-token`) cannot be polled.** They are minted without the
   `user:profile` scope that `/api/oauth/usage` requires, so they return 403. Such accounts are
   flagged `LongLived` (and detected by an absent refresh token, which also covers stores written
@@ -57,6 +64,7 @@ make build   # build to bin/ccswitch
 make lint    # golangci-lint (very strict; see pipelines .golangci.yml)
 make test    # unit + integration tests (single test: go test ./internal/domain/entities/ -run TestStoreMatchAccount)
 make sast    # security scanners
+make cross-compile  # go vet for all six released OS/arch targets
 ```
 
 ## Conventions
