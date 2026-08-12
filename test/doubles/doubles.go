@@ -78,16 +78,25 @@ func (r *StubCredentialsRepository) Exists() bool {
 
 // StubUsageRepository returns canned usage, optionally keyed by access token.
 type StubUsageRepository struct {
-	Usage      *entities.Usage
-	ByToken    map[string]*entities.Usage
+	Usage   *entities.Usage
+	ByToken map[string]*entities.Usage
+	// ErrByToken rejects specific access tokens, modelling a server that has
+	// invalidated one token while accepting the one minted to replace it.
+	ErrByToken map[string]error
 	Err        error
 	FetchCalls int
+	// Tokens records every access token Fetch was called with, in order.
+	Tokens []string
 }
 
 // Fetch returns the usage configured for the token, the default usage, or an
 // empty usage.
 func (r *StubUsageRepository) Fetch(accessToken string) (*entities.Usage, error) {
 	r.FetchCalls++
+	r.Tokens = append(r.Tokens, accessToken)
+	if err, ok := r.ErrByToken[accessToken]; ok {
+		return nil, err
+	}
 	if r.Err != nil {
 		return nil, r.Err
 	}
