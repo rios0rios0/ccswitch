@@ -16,6 +16,8 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-12
+
 ### Added
 
 - added macOS support. Claude Code on macOS uses a `keychain-with-plaintext-fallback` credential store, in which the generic-password item `Claude Code-credentials` wins whenever it is readable and `~/.claude/.credentials.json` is consulted only when the keychain returns nothing. Rewriting that file was therefore a no-op on macOS: `ccswitch enroll` failed outright on machines where it does not exist, taking every other command with it. Credentials are now read and written through the keychain, and session detection reads the process table instead of `/proc`
