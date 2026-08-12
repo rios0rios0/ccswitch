@@ -64,9 +64,13 @@ else branches on the OS; keep it that way.
   read only when the keychain returns nothing — so writing that file is a no-op there. The item is one
   JSON document holding `claudeAiOauth` **and** `mcpOAuth`, the OAuth tokens of every authenticated MCP
   server; marshalling just `claudeAiOauth` over it signs the user out of every MCP server on every
-  rotation. Merge into the stored document, refuse to write when it cannot be parsed, and read the item
-  back to confirm the write: `security -i` silently truncates command lines over `securityStdinLimit`
-  (4032), which is why payloads above it go through argv instead.
+  rotation. Merge into the stored document, refuse to write when it cannot be read or parsed, and read
+  the item back to confirm the write: `security -i` silently truncates command lines over
+  `securityStdinLimit` (4032), which is why payloads above it go through argv instead. Only
+  `ErrKeychainItemNotFound` (exit status 44, `errSecItemNotFound`) means the item is absent and a write
+  may start from an empty document — a locked keychain, a denied prompt or a timeout must abort the
+  write, since inferring absence from "the read failed" erases exactly the `mcpOAuth` tokens this
+  guards.
 - **The Claude desktop app is not a Claude Code session.** It runs as
   `Claude.app/Contents/MacOS/Claude`, whose base name matches the CLI's under `matchesClaudeProcess`'s
   case-insensitive compare. Counting it would make `ClaudeRunning()` permanently true and silently

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"os/user"
@@ -31,8 +32,19 @@ const (
 	// Anything above this must be passed through argv instead.
 	securityStdinLimit = 4032
 
+	// securityNotFoundExitCode is the status `security` exits with for
+	// errSecItemNotFound, i.e. no such item in the keychain. It is the only failure
+	// that means the item is genuinely absent rather than merely unreadable.
+	securityNotFoundExitCode = 44
+
 	securityTimeout = 10 * time.Second
 )
+
+// ErrKeychainItemNotFound reports that the keychain holds no such item, as
+// opposed to holding one that could not be read. The difference decides whether a
+// write may start from an empty document, so it must never be inferred from "the
+// read failed".
+var ErrKeychainItemNotFound = errors.New("keychain item not found")
 
 // SecurityRunner executes the macOS `security` tool. It is an interface so tests
 // can exercise the repository without touching the real login keychain.
@@ -59,8 +71,12 @@ func (ExecSecurityRunner) Run(stdin []byte, args ...string) ([]byte, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("security %s failed: %w: %s",
-			args[0], err, strings.TrimSpace(stderr.String()))
+		detail := strings.TrimSpace(stderr.String())
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == securityNotFoundExitCode {
+			return nil, fmt.Errorf("%w: security %s: %s", ErrKeychainItemNotFound, args[0], detail)
+		}
+		return nil, fmt.Errorf("security %s failed: %w: %s", args[0], err, detail)
 	}
 	return out, nil
 }
@@ -147,7 +163,10 @@ func (r *KeychainCredentialsRepository) Write(
 		return err
 	}
 
-	encoded, err := json.Marshal(creds)
+	// gosec flags marshalling a struct whose JSON keys look like secrets. They are
+	// secrets, and serializing them is the point: this is the credential store
+	// Claude Code reads them back from.
+	encoded, err := json.Marshal(creds) //nolint:gosec // G117: writing tokens to the credential store is the purpose
 	if err != nil {
 		return fmt.Errorf("failed to marshal credentials: %w", err)
 	}
@@ -173,16 +192,22 @@ func (r *KeychainCredentialsRepository) Exists() bool {
 
 // readRoot returns the stored keychain document as a key-preserving map, or an
 // empty map when no item exists yet. It refuses to return an empty map for an
-// item that exists but cannot be parsed, so that a corrupt or unexpected payload
-// is never silently replaced — losing mcpOAuth that way would sign the user out
-// of every MCP server.
+// item that exists but cannot be read or parsed, so that a payload that is merely
+// unavailable is never silently replaced — losing mcpOAuth that way would sign
+// the user out of every MCP server.
 func (r *KeychainCredentialsRepository) readRoot() (map[string]json.RawMessage, error) {
 	root := map[string]json.RawMessage{}
 
 	blob, err := r.readBlob()
 	if err != nil {
-		// No item yet (first ever write): start from an empty document.
-		return root, nil //nolint:nilerr // absence is not an error, it is a fresh install
+		// Only a genuine "no such item" means a fresh install that may start from an
+		// empty document. Every other failure — a locked keychain, a denied access
+		// prompt, a timeout — leaves an item that probably does exist, and merging
+		// into an empty document would erase whatever mcpOAuth tokens it holds.
+		if errors.Is(err, ErrKeychainItemNotFound) {
+			return root, nil
+		}
+		return nil, err
 	}
 	if len(bytes.TrimSpace(blob)) == 0 {
 		return root, nil

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,7 +22,8 @@ import (
 type fakeSecurityRunner struct {
 	stored  string // the item's plaintext payload; empty means "no such item"
 	absent  bool
-	truncAt int // when > 0, store only this many hex characters, as `security -i` does
+	readErr error // when set, reads fail with it instead of returning the payload
+	truncAt int   // when > 0, store only this many hex characters, as `security -i` does
 	writes  int
 }
 
@@ -29,8 +31,14 @@ type fakeSecurityRunner struct {
 func (f *fakeSecurityRunner) Run(stdin []byte, args ...string) ([]byte, error) {
 	switch args[0] {
 	case "find-generic-password":
+		if f.readErr != nil {
+			return nil, f.readErr
+		}
 		if f.absent {
-			return nil, errors.New("SecKeychainSearchCopyNext: The specified item could not be found")
+			// The real runner maps exit status 44 onto this sentinel; anything else
+			// must not be mistaken for absence.
+			return nil, fmt.Errorf("%w: SecKeychainSearchCopyNext",
+				repositories.ErrKeychainItemNotFound)
 		}
 		return []byte(f.stored + "\n"), nil
 	case "-i":
@@ -163,6 +171,26 @@ func TestKeychainCredentialsRepositoryWrite(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		assert.Contains(t, runner.stored, `"accessToken":"at"`)
+	})
+
+	t.Run("should refuse to write when the item exists but cannot be read", func(t *testing.T) {
+		t.Parallel()
+		// given a keychain that is locked, or an access prompt the user denied —
+		// the item is very likely still there, so treating the failure as absence
+		// would replace it and erase every mcpOAuth token it holds
+		runner := &fakeSecurityRunner{
+			stored:  `{"claudeAiOauth":{},"mcpOAuth":{"linear|abc":{"accessToken":"mcp-token"}}}`,
+			readErr: errors.New("SecKeychainItemCopyContent: User interaction is not allowed"),
+		}
+		repo := keychainRepo(t, runner)
+
+		// when
+		err := repo.Write(&entities.OAuthCredentials{AccessToken: "at", RefreshToken: "rt"}, nil)
+
+		// then
+		require.Error(t, err)
+		assert.Contains(t, runner.stored, "mcp-token")
+		assert.Zero(t, runner.writes)
 	})
 
 	t.Run("should refuse to overwrite an unparsable item", func(t *testing.T) {

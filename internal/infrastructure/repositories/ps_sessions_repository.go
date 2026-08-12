@@ -62,7 +62,7 @@ func (r *PSSessionsRepository) ClaudeRunning() bool {
 		return false
 	}
 
-	for _, line := range strings.Split(string(bytes.TrimSpace(out)), "\n") {
+	for line := range strings.SplitSeq(string(bytes.TrimSpace(out)), "\n") {
 		pid, executable, ok := splitProcessLine(line)
 		if !ok || pid == r.selfPID {
 			continue
