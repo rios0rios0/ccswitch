@@ -31,7 +31,7 @@ const (
 type deps struct {
 	config      *entities.Config
 	accounts    *repositories.JSONAccountsRepository
-	credentials *repositories.FileCredentialsRepository
+	credentials domain.CredentialsRepository
 	usage       *repositories.AnthropicUsageRepository
 	tokens      *repositories.AnthropicTokensRepository
 	sessions    domain.SessionsRepository
@@ -88,7 +88,7 @@ func newDeps(cfg *entities.Config) *deps {
 	return &deps{
 		config:      cfg,
 		accounts:    repositories.NewJSONAccountsRepository(cfg.StorePath),
-		credentials: repositories.NewFileCredentialsRepository(cfg.CredentialsPath, cfg.ClaudeJSONPath),
+		credentials: newCredentialsRepository(cfg),
 		usage:       repositories.NewAnthropicUsageRepository(cfg.UsageBaseURL, nil),
 		tokens:      repositories.NewAnthropicTokensRepository(cfg.TokenURL, cfg.ClientID, nil),
 		sessions:    newSessionsRepository(),

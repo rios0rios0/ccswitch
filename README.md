@@ -22,7 +22,7 @@
 
 ## How it works
 
-Claude Code stores its subscription OAuth tokens in `~/.claude/.credentials.json` (under `claudeAiOauth`). `ccswitch` keeps a local store of enrolled accounts and, when the active one is exhausted, atomically rewrites that file with the next account's tokens. Claude Code refreshes the swapped-in access token itself on launch, so no manual login is needed.
+Claude Code stores its subscription OAuth tokens under `claudeAiOauth` — in `~/.claude/.credentials.json` on Linux and Windows, and in the login keychain on macOS (see [macOS notes](#macos-notes)). `ccswitch` keeps a local store of enrolled accounts and, when the active one is exhausted, atomically installs the next account's tokens in whichever of those the platform uses. Claude Code refreshes the swapped-in access token itself on launch, so no manual login is needed.
 
 Rotation happens at launch boundaries, not mid-conversation: a running session that hits its limit is not hot-switched; you exit and relaunch (optionally `claude --continue`) and the new account is already active.
 
@@ -54,6 +54,30 @@ make install    # builds and copies the binary to ~/.local/bin/ccswitch
 
 Download pre-built binaries from the [releases page](https://github.com/rios0rios0/ccswitch/releases). The installer script is for Linux and macOS; on Windows, download the `.zip` and put `ccswitch.exe` somewhere on your `PATH`.
 
+### macOS notes
+
+On macOS Claude Code does not keep its tokens in `~/.claude/.credentials.json`. It uses a
+`keychain-with-plaintext-fallback` credential store: the login keychain is authoritative, and the
+file is only consulted when the keychain read returns nothing. So while a keychain item exists,
+writing that file has no effect at all.
+
+`ccswitch` therefore reads and writes the generic-password item `Claude Code-credentials` (filed
+under your login name) directly, via `security`. Two consequences worth knowing:
+
+- **`--credentials` is ignored on macOS.** The keychain item is the target; there is no path to
+  point at.
+- **Rotation preserves your MCP logins.** That keychain item is a single JSON document holding both
+  `claudeAiOauth` *and* `mcpOAuth` — the OAuth tokens of every MCP server you have authenticated.
+  Rotation is a read-modify-write that replaces only `claudeAiOauth`, so the MCP tokens survive.
+  Every write is read back and compared before being reported as successful, because `security -i`
+  truncates payloads over ~4 KB without a reliable error, and a truncated write here would sign you
+  out of Claude *and* of every MCP server at once.
+
+Session detection uses the process table rather than `/proc`, which macOS does not provide.
+Executables inside `.app` bundles are never counted as sessions: the Claude desktop app runs as
+`Claude.app/Contents/MacOS/Claude`, whose name matches the CLI's case-insensitively, and treating it
+as a live session would block every rotation for as long as the desktop app is open.
+
 ### Windows notes
 
 `ccswitch` behaves the same on Windows, with two differences worth knowing:
@@ -84,7 +108,7 @@ ccswitch monitor --ensure-daemon   # start the daemon in the background if not r
 | `--interval`     | `5m`                                  | Monitor poll interval.                                 |
 | `--prefer-primary` | `true`                              | Always run on the highest-priority account with capacity, returning to the primary as soon as its limits reset. |
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
-| `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file.                |
+| `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file. Ignored on macOS, where the login keychain is used instead. |
 
 ### Long-lived tokens
 
@@ -134,13 +158,14 @@ ccswitch/
     │   └── repositories/         # ports: accounts, credentials, usage, tokens, sessions
     └── infrastructure/
         ├── controllers/          # cobra CLI wiring
-        ├── repositories/         # JSON store, Claude credentials file, HTTP usage/token clients, session probe
+        ├── repositories/         # JSON store, credentials swappers (file / macOS keychain), HTTP usage/token clients, session probes
         └── services/             # background daemon supervision
 ```
 
-Anything the operating system does differently lives in a `_unix.go` / `_windows.go` pair: process
-detachment and liveness in `services`, session detection in `repositories` (`/proc` scan versus
-ToolHelp32 snapshot), and the choice between them in `controllers`. Everything else is portable.
+Anything the operating system does differently lives in a `_unix.go` / `_darwin.go` / `_windows.go`
+pair: process detachment and liveness in `services`, the credentials swapper and session detection
+in `repositories` (credentials file versus login keychain; `/proc` scan, process table, or ToolHelp32
+snapshot), and the choice between them in `controllers`. Everything else is portable.
 
 ## Development
 
