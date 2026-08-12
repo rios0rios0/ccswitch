@@ -3,10 +3,13 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
+
+	logger "github.com/sirupsen/logrus"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 	"github.com/rios0rios0/ccswitch/internal/domain/repositories"
@@ -19,8 +22,16 @@ const (
 )
 
 // pollUsage fetches usage for the given credentials, refreshing the access token
-// first when it is expired and a refresher is available. It returns the usage and
-// the (possibly refreshed) credentials so the caller can persist them.
+// when needed. It returns the usage and the (possibly refreshed) credentials so
+// the caller can persist them — including on the error paths, because a refresh
+// that already succeeded rotated the token server-side and cannot be undone.
+//
+// A refresh is attempted up front when the recorded expiry has passed, and again
+// when the server rejects the token despite that expiry still being in the
+// future: tokens are invalidated server-side on their own schedule, so the
+// timestamp alone is not enough to tell a live token from a dead one. Without the
+// second attempt an account whose token was invalidated early stays unreadable
+// until it is enrolled again.
 func pollUsage(
 	usageRepo repositories.UsageRepository,
 	tokensRepo repositories.TokensRepository,
@@ -28,18 +39,89 @@ func pollUsage(
 	nowMillis int64,
 ) (*entities.Usage, entities.OAuthCredentials, error) {
 	current := *creds
-	if current.AccessTokenExpired(nowMillis) && tokensRepo != nil && current.RefreshToken != "" {
+	canRefresh := tokensRepo != nil && current.RefreshToken != ""
+
+	if current.AccessTokenExpired(nowMillis) && canRefresh {
 		refreshed, err := tokensRepo.Refresh(current.RefreshToken)
 		if err != nil {
 			return nil, current, fmt.Errorf("failed to refresh access token: %w", err)
 		}
+		if refreshed == nil {
+			return nil, current, errors.New("token refresh returned no credentials")
+		}
 		current = *refreshed
+		// The token is as fresh as it gets; a rejection below is not staleness, and
+		// retrying would spend the new refresh token to no purpose.
+		canRefresh = false
 	}
+
 	usage, err := usageRepo.Fetch(current.AccessToken)
+	if err == nil {
+		return usage, current, nil
+	}
+	if !canRefresh || !errors.Is(err, repositories.ErrUnauthorized) {
+		return nil, current, err
+	}
+
+	refreshed, refreshErr := tokensRepo.Refresh(current.RefreshToken)
+	if refreshErr != nil {
+		return nil, current, fmt.Errorf("failed to refresh rejected access token: %w", refreshErr)
+	}
+	if refreshed == nil {
+		return nil, current, errors.New("token refresh returned no credentials")
+	}
+	current = *refreshed
+
+	usage, err = usageRepo.Fetch(current.AccessToken)
 	if err != nil {
 		return nil, current, err
 	}
 	return usage, current, nil
+}
+
+// publishRefreshed writes credentials a poll just refreshed back to the
+// credentials store when that store still holds the pair the refresh consumed.
+//
+// The server rotates the refresh token on every refresh and invalidates the
+// previous one, so keeping the new pair only in the ccswitch store leaves Claude
+// Code holding a token the server has already killed: its next refresh fails with
+// invalid_grant and the session is logged out. Because a refresh only happens
+// once the access token is spent, this bites idle sessions in particular.
+//
+// Publishing the same account's newer tokens is not an account switch, so it is
+// safe while a session is running -- the running-session guard in switchTo exists
+// to avoid swapping a live process onto a different account, which this is not.
+func publishRefreshed(
+	credentials repositories.CredentialsRepository,
+	previous entities.OAuthCredentials,
+	account *entities.Account,
+) {
+	if credentials == nil {
+		return
+	}
+	if account.Credentials.AccessToken == previous.AccessToken &&
+		account.Credentials.RefreshToken == previous.RefreshToken {
+		return
+	}
+
+	onDisk, _, err := credentials.Read()
+	if err != nil || onDisk == nil {
+		return
+	}
+	// Only publish when the store still carries exactly what the refresh consumed.
+	// Anything else means another writer got there first, and its tokens are at
+	// least as fresh as these -- including the case where a different account is
+	// installed, which must not be overwritten here.
+	if onDisk.AccessToken != previous.AccessToken || onDisk.RefreshToken != previous.RefreshToken {
+		return
+	}
+
+	if err = credentials.Write(&account.Credentials, &account.Identity); err != nil {
+		logger.Warnf("[ccswitch] failed to publish refreshed credentials for %s: %v",
+			account.Email, err)
+		return
+	}
+	logger.Debugf("[ccswitch] published refreshed credentials for %s", account.Email)
 }
 
 // apiKeyOverride reports whether an environment variable is set that would cause

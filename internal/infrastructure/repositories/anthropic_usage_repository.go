@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
+	domain "github.com/rios0rios0/ccswitch/internal/domain/repositories"
 )
 
 const (
@@ -81,6 +82,11 @@ func (r *AnthropicUsageRepository) Fetch(accessToken string) (*entities.Usage, e
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read usage response: %w", err)
+	}
+	// A rejected token is reported as its own error so callers can refresh and retry
+	// instead of reporting the account as unreadable; see domain.ErrUnauthorized.
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("%w (status %d): %s", domain.ErrUnauthorized, resp.StatusCode, string(body))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("usage endpoint returned status %d: %s", resp.StatusCode, string(body))

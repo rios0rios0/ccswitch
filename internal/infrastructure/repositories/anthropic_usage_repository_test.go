@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	domain "github.com/rios0rios0/ccswitch/internal/domain/repositories"
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/repositories"
 )
 
@@ -53,7 +54,7 @@ func TestAnthropicUsageRepositoryFetch(t *testing.T) {
 		assert.True(t, usage.Exhausted(exhaustThreshold))
 	})
 
-	t.Run("should return an error on a non-200 response", func(t *testing.T) {
+	t.Run("should report a rejected token as ErrUnauthorized", func(t *testing.T) {
 		t.Parallel()
 		// given
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -67,5 +68,25 @@ func TestAnthropicUsageRepositoryFetch(t *testing.T) {
 
 		// then
 		require.Error(t, err)
+		require.ErrorIs(t, err, domain.ErrUnauthorized,
+			"callers refresh and retry on this error; a plain error strands the account")
+	})
+
+	t.Run("should not report other failures as ErrUnauthorized", func(t *testing.T) {
+		t.Parallel()
+		// given
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+		repo := repositories.NewAnthropicUsageRepository(server.URL, server.Client())
+
+		// when
+		_, err := repo.Fetch("token")
+
+		// then
+		require.Error(t, err)
+		require.NotErrorIs(t, err, domain.ErrUnauthorized,
+			"refreshing on a server-side failure burns the refresh token for nothing")
 	})
 }

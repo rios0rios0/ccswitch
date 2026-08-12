@@ -35,7 +35,9 @@ func newListCommand(cfg *entities.Config) *cobra.Command {
 		Short: "List enrolled accounts with their live usage",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			deps := newDeps(cfg)
-			return commands.NewListAccountsCommand(deps.config, deps.accounts, deps.usage, deps.tokens).Execute()
+			return commands.NewListAccountsCommand(
+				deps.config, deps.accounts, deps.credentials, deps.usage, deps.tokens,
+			).Execute()
 		},
 	}
 }
@@ -47,7 +49,9 @@ func newStatusCommand(cfg *entities.Config) *cobra.Command {
 		Short: "Show the active account and its usage",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			deps := newDeps(cfg)
-			return commands.NewStatusCommand(deps.config, deps.accounts, deps.usage, deps.tokens).Execute()
+			return commands.NewStatusCommand(
+				deps.config, deps.accounts, deps.credentials, deps.usage, deps.tokens,
+			).Execute()
 		},
 	}
 }

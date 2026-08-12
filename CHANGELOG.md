@@ -16,6 +16,11 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+### Fixed
+
+- fixed `list` and `status` destroying the accounts they polled. Both discarded the credentials `pollUsage` returned, and because the server rotates the refresh token on every refresh and invalidates the previous one, a single `ccswitch list` over an account whose access token had expired left the store pinned to a refresh token that no longer existed. That account was then unreadable for good and had to be enrolled again. Both commands now write the refreshed pair back to the store and, when the credentials file still holds exactly the pair the refresh consumed, publish it there too — the same guard the monitor already applied, now shared between all three
+- fixed an account staying unreadable after its token was invalidated ahead of the recorded expiry. A refresh was attempted only once `expiresAt` had passed, but the server invalidates tokens on its own schedule and a fresh login supersedes the pair ccswitch captured earlier, so a token rejected while its timestamp still looked valid was never renewed — the account reported `usage unavailable` on every poll until it was enrolled again. A rejected token is now reported as `ErrUnauthorized` and refreshed once before the poll gives up; other failures, including rate limiting, still do not spend the refresh token
+
 ## [0.3.0] - 2026-08-05
 
 ### Added

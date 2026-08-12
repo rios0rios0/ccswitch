@@ -11,6 +11,9 @@ const (
 	fullPct      = 100.0
 	lowPct       = 20.0
 	longRecovery = 72 * time.Hour
+	// farFuture is an expiry no test run will reach, so a token carrying it is
+	// refreshed only when something other than its age forces it.
+	farFuture = int64(1) << 62
 )
 
 // validCreds returns a complete credential set for the primary test account.
@@ -35,6 +38,17 @@ func twoAccountStore() *entities.Store {
 		},
 		Rotation: entities.RotationState{CurrentEmail: "a@example.com"},
 	}
+}
+
+// livePairStore returns twoAccountStore with both access tokens well inside
+// their validity. twoAccountStore leaves ExpiresAt unset, which counts as
+// expired, so tests that care whether a poll refreshed need this instead.
+func livePairStore() *entities.Store {
+	store := twoAccountStore()
+	for i := range store.Accounts {
+		store.Accounts[i].Credentials.ExpiresAt = farFuture
+	}
+	return store
 }
 
 // longLivedOnlyStore returns a store holding a single account enrolled from a
