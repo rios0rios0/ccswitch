@@ -60,8 +60,10 @@ func (r *FileCredentialsRepository) Read() (*entities.OAuthCredentials, *entitie
 // claudeAiOauth is not the only thing the file holds: alongside it sit mcpOAuth,
 // the tokens of every authenticated MCP server, and designOauth. Marshalling only
 // claudeAiOauth over the file would sign the user out of all of them on every
-// rotation, so the stored document is preserved verbatim and only claudeAiOauth
-// is replaced.
+// rotation, so every sibling entry is carried across untouched — held as
+// [json.RawMessage], so their values survive byte for byte — and only claudeAiOauth
+// is replaced. The document is re-marshalled, so its indentation and key order
+// are not preserved, only its content.
 func (r *FileCredentialsRepository) Write(
 	creds *entities.OAuthCredentials,
 	identity *entities.AccountIdentity,

@@ -192,13 +192,26 @@ func (c *MonitorCommand) pollAccount(
 	account.Credentials = creds
 	publishRefreshed(c.credentials, previous, account)
 
+	// Record the attempt, not just the success: this timestamp is the backup poll
+	// cadence's only input, so leaving it behind on a failure would make a failing
+	// account the one polled on every single tick — and the endpoint pushing back
+	// is exactly the condition the cadence exists to survive.
+	account.LastPolledAt = now
+
 	if err != nil {
 		logger.Warnf("[ccswitch] usage poll for %s failed: %v", account.Email, err)
 		return
 	}
 
 	account.LastUsage = usage
-	account.LastPolledAt = now
+	if account.Credentials.Degraded() {
+		// The repair refresh in pollUsage ran and the scopes still fail the
+		// invariant, so the endpoint is refusing to mint them. Retrying forever
+		// would burn a refresh token per poll, so say so instead of looping quietly.
+		logger.Warnf("[ccswitch] %s still lacks the %q scope after a refresh; "+
+			"Claude Code will discard its credentials — log in again with `claude` and re-enroll",
+			account.Email, entities.ScopeInference)
+	}
 
 	if !usage.Exhausted(threshold) {
 		store.Rotation.ClearExhausted(account.Email)

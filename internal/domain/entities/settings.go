@@ -1,8 +1,8 @@
 package entities
 
 // MaxThreshold is the highest utilization percentage a threshold may be set to.
-// At 100 an account is only ever considered exhausted once a limit actually
-// reaches its ceiling or the server flags it critical.
+// At 100 an account is considered exhausted only once one of its active limits
+// actually reads full.
 const MaxThreshold = 100.0
 
 // Settings holds the runtime settings that live in the store rather than on the

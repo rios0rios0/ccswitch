@@ -188,3 +188,80 @@ func TestAnthropicTokensRepositoryRepairsDegradedCredentials(t *testing.T) {
 		assert.False(t, creds.Degraded(), "one refresh must be enough to repair the account")
 	})
 }
+
+func TestAnthropicTokensRepositoryWidensNarrowedScopes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should ask for the full set when the stored scopes omit user:inference", func(t *testing.T) {
+		t.Parallel()
+		// given: a set narrowed to scopes Claude Code cannot use. Echoing it back
+		// would ask the endpoint to mint exactly the token that needs repairing.
+		var received string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			received = string(body)
+			_, _ = io.WriteString(w, `{"access_token":"new-access","expires_in":3600}`)
+		}))
+		defer server.Close()
+		repo := repositories.NewAnthropicTokensRepository(server.URL, "client", server.Client())
+		narrowed := entities.OAuthCredentials{
+			RefreshToken: "refresh",
+			Scopes:       []string{"user:profile", "user:file_upload"},
+		}
+
+		// when
+		creds, err := repo.Refresh(narrowed)
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, received, entities.ScopeInference)
+		assert.False(t, creds.Degraded(), "one refresh must widen the set back")
+	})
+
+	t.Run("should keep the stored scopes when they already satisfy the invariant", func(t *testing.T) {
+		t.Parallel()
+		// given
+		var received string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			received = string(body)
+			_, _ = io.WriteString(w, `{"access_token":"new-access","expires_in":3600}`)
+		}))
+		defer server.Close()
+		repo := repositories.NewAnthropicTokensRepository(server.URL, "client", server.Client())
+
+		// when
+		_, err := repo.Refresh(subscriptionCreds("refresh"))
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, received,
+			`"scope":"user:profile user:inference user:sessions:claude_code `+
+				`user:mcp_servers user:file_upload"`)
+	})
+}
+
+func TestAnthropicTokensRepositoryRecordsWhatTheEndpointGranted(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should record a narrowed set the endpoint actually named", func(t *testing.T) {
+		t.Parallel()
+		// given: the endpoint answers with a scope list that omits user:inference.
+		// Substituting what was requested would claim a scope the token does not
+		// carry; the honest record is what came back, which then reads as degraded.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w,
+				`{"access_token":"new-access","expires_in":3600,"scope":"user:profile"}`)
+		}))
+		defer server.Close()
+		repo := repositories.NewAnthropicTokensRepository(server.URL, "client", server.Client())
+
+		// when
+		creds, err := repo.Refresh(subscriptionCreds("refresh"))
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"user:profile"}, creds.Scopes)
+		assert.True(t, creds.Degraded(), "the account is genuinely unusable and must read as such")
+	})
+}

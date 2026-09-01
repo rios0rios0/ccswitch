@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'made `OAuthCredentials.Degraded` test the scope invariant it guards -- that the scopes name `user:inference` -- rather than the weaker "carries no scopes at all". A set narrowed to some other scope is just as fatal, is reached the same way, and was previously sticky: the repair path could not see it, and each refresh asked for the narrowed set again. A refresh now widens a degraded set back to Claude Code''s full scope list, while a narrowing the endpoint explicitly reports is still recorded honestly and surfaced in the daemon log'
+time: '2026-09-01T18:07:53.892801451Z'

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -11,8 +12,9 @@ import (
 
 // SetThresholdCommand persists the rotation threshold and applies it on the spot.
 type SetThresholdCommand struct {
-	config   *entities.Config
-	accounts repositories.AccountsRepository
+	config      *entities.Config
+	accounts    repositories.AccountsRepository
+	credentials repositories.CredentialsRepository
 	// monitor re-applies the rotation policy under the new threshold. Reusing it
 	// rather than reimplementing the selection is what makes `threshold` and the
 	// daemon agree on which account should be active.
@@ -30,10 +32,11 @@ func NewSetThresholdCommand(
 	sessions repositories.SessionsRepository,
 ) *SetThresholdCommand {
 	return &SetThresholdCommand{
-		config:   config,
-		accounts: accounts,
-		monitor:  NewMonitorCommand(config, accounts, credentials, usage, tokens, sessions),
-		now:      time.Now,
+		config:      config,
+		accounts:    accounts,
+		credentials: credentials,
+		monitor:     NewMonitorCommand(config, accounts, credentials, usage, tokens, sessions),
+		now:         time.Now,
 	}
 }
 
@@ -73,7 +76,7 @@ func (c *SetThresholdCommand) Reset() error {
 	}
 	if store.Settings.Threshold == nil {
 		fmt.Fprintf(os.Stdout, "[ccswitch] rotation threshold already at the default %.0f%%\n",
-			c.config.Threshold)
+			c.config.ResolveThreshold(store.Settings))
 		return nil
 	}
 
@@ -82,8 +85,11 @@ func (c *SetThresholdCommand) Reset() error {
 	if err = c.accounts.Save(store); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "[ccswitch] rotation threshold reset to the default %.0f%% (was %.0f%%)\n",
-		c.config.Threshold, previous)
+	// Report what will actually apply, which is the flag when one was passed --
+	// announcing the built-in default there would name a number nothing uses.
+	fmt.Fprintf(os.Stdout, "[ccswitch] rotation threshold reset to %.0f%% (was %.0f%%)\n",
+		c.config.ResolveThreshold(store.Settings), previous)
+	c.warnShadowed()
 
 	if len(store.Accounts) == 0 {
 		return nil
@@ -105,9 +111,13 @@ func (c *SetThresholdCommand) Reset() error {
 // activates the first account in rotation order whose utilization is below the
 // new one.
 func (c *SetThresholdCommand) Execute(threshold float64) error {
-	if threshold <= 0 || threshold > entities.MaxThreshold {
+	// NaN is rejected explicitly: every comparison against it is false, so a bare
+	// range check admits it — and `strconv.ParseFloat` accepts the literal "NaN".
+	// Stored, it would make `Percent >= threshold` false for every limit and
+	// silently disable rotation altogether.
+	if math.IsNaN(threshold) || threshold <= 0 || threshold > entities.MaxThreshold {
 		return fmt.Errorf(
-			"threshold must be greater than 0 and at most %.0f, got %.0f",
+			"threshold must be greater than 0 and at most %.0f, got %v",
 			entities.MaxThreshold, threshold)
 	}
 
@@ -123,11 +133,7 @@ func (c *SetThresholdCommand) Execute(threshold float64) error {
 	fmt.Fprintf(os.Stdout, "[ccswitch] rotation threshold set to %.0f%% (was %.0f%%)\n",
 		threshold, previous)
 
-	if c.config.ThresholdExplicit {
-		fmt.Fprintf(os.Stderr,
-			"[ccswitch] WARN: --threshold %.0f was also passed and shadows the stored value "+
-				"for this invocation\n", c.config.Threshold)
-	}
+	c.warnShadowed()
 	if len(store.Accounts) == 0 {
 		return nil
 	}
@@ -136,6 +142,17 @@ func (c *SetThresholdCommand) Execute(threshold float64) error {
 		return fmt.Errorf("failed to re-apply the rotation policy: %w", err)
 	}
 	return c.report()
+}
+
+// warnShadowed points out that an explicit --threshold outranks the stored value
+// for this invocation, so a command that just wrote one does not look ignored.
+func (c *SetThresholdCommand) warnShadowed() {
+	if !c.config.ThresholdExplicit {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"[ccswitch] WARN: --threshold %.0f was also passed and shadows the stored value "+
+			"for this invocation\n", c.config.Threshold)
 }
 
 // report prints which account the re-applied policy selected, and whether the
@@ -168,7 +185,7 @@ func (c *SetThresholdCommand) pendingLaunch(
 	store *entities.Store,
 	current *entities.Account,
 ) bool {
-	onDisk, identity, err := c.monitor.credentials.Read()
+	onDisk, identity, err := c.credentials.Read()
 	if err != nil || onDisk == nil {
 		return false
 	}

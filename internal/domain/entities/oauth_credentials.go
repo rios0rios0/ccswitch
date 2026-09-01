@@ -2,6 +2,14 @@
 // infrastructure or framework concerns.
 package entities
 
+import "slices"
+
+// ScopeInference is the OAuth scope Claude Code requires of a subscription
+// login. Its own check is `Array.isArray(scopes) && scopes.includes(...)`: a
+// credential set without it is classified as not-claude.ai and its refresh is
+// silently discarded, which is what turns a stale pair into a logout.
+const ScopeInference = "user:inference"
+
 // OAuthCredentials holds the Claude Code OAuth tokens for a single account.
 // It mirrors the "claudeAiOauth" object stored inside ~/.claude/.credentials.json.
 type OAuthCredentials struct {
@@ -87,15 +95,18 @@ func (c OAuthCredentials) Blank() bool {
 	return c.AccessToken == ""
 }
 
-// Degraded reports whether the credentials are missing the scopes a Claude Code
-// subscription login carries, while still being refreshable.
+// Degraded reports whether the credentials fail the scope invariant while still
+// being refreshable.
 //
-// Only a credential set that an earlier ccswitch rebuilt from a bare refresh
-// response looks like this, and it is not merely cosmetic: Claude Code discards
-// its own refresh of a set whose scopes omit `user:inference`, so installing one
-// strands the pair on disk until it 401s and the account is signed out. A single
-// refresh restores them, which is why polling repairs such an account instead of
-// waiting for its access token to age out.
+// The test is the invariant itself — the scopes must name ScopeInference —
+// rather than the weaker "carries no scopes at all". Claude Code discards its
+// own refresh of a set whose scopes omit that one, so a set narrowed to some
+// other scope is just as fatal as an empty one and is reached the same way: the
+// endpoint mints for what the request asks, the result is stored verbatim, and
+// the next request asks for the narrowed set again. Testing only for emptiness
+// left that state sticky and invisible to the repair path. A single refresh
+// restores it, which is why polling repairs such an account instead of waiting
+// for its access token to age out.
 func (c OAuthCredentials) Degraded() bool {
-	return c.RefreshToken != "" && len(c.Scopes) == 0
+	return c.RefreshToken != "" && !slices.Contains(c.Scopes, ScopeInference)
 }

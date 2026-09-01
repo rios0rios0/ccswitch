@@ -1,6 +1,7 @@
 package commands_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -220,5 +221,43 @@ func TestSetThresholdCommandReset(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, accounts.Store.Settings.Threshold)
 		assert.Equal(t, 0, accounts.SaveCalls)
+	})
+}
+
+func TestSetThresholdCommandRejectsNonNumericThresholds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should reject NaN", func(t *testing.T) {
+		t.Parallel()
+		// given: `strconv.ParseFloat` accepts the literal "NaN", and every comparison
+		// against it is false, so a bare range check admits it. Stored, it would make
+		// `Percent >= threshold` false for every limit and disable rotation silently.
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		command := commands.NewSetThresholdCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{},
+			&doubles.StubUsageRepository{}, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Execute(math.NaN())
+
+		// then
+		require.Error(t, err)
+		assert.Nil(t, accounts.Store.Settings.Threshold)
+	})
+
+	t.Run("should reject positive infinity", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		command := commands.NewSetThresholdCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{},
+			&doubles.StubUsageRepository{}, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Execute(math.Inf(1))
+
+		// then
+		require.Error(t, err)
+		assert.Nil(t, accounts.Store.Settings.Threshold)
 	})
 }

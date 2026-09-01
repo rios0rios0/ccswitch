@@ -791,4 +791,66 @@ func TestMonitorCommandTick(t *testing.T) {
 		assert.Equal(t, 1, tokens.RefreshCalls)
 		assert.Equal(t, "rb-new", accounts.Store.Accounts[1].Credentials.RefreshToken)
 	})
+
+	t.Run("should advance the poll clock even when the poll failed", func(t *testing.T) {
+		t.Parallel()
+		// given: a backup whose usage call fails, which is what a 429 looks like.
+		// LastPolledAt is the cadence's only input, so leaving it behind on failure
+		// made a failing account the one polled on every tick -- the endpoint
+		// pushing back being exactly the condition the cadence exists to survive.
+		now := time.Now()
+		store := livePairStore()
+		store.Accounts[1].LastPolledAt = now.Add(-time.Hour)
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds: &entities.OAuthCredentials{
+				AccessToken: "a", RefreshToken: "ra", ExpiresAt: farFuture, Scopes: loginScopes(),
+			},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		usage := &doubles.StubUsageRepository{
+			ByToken:    map[string]*entities.Usage{"a": healthyUsage()},
+			ErrByToken: map[string]error{"b": assert.AnError},
+		}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(now)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, now, accounts.Store.Accounts[1].LastPolledAt,
+			"a failed attempt still counts against the cadence")
+	})
+
+	t.Run("should hold the cadence after a failed poll instead of retrying every tick", func(t *testing.T) {
+		t.Parallel()
+		// given: the tick above, followed by another one two minutes later
+		now := time.Now()
+		store := livePairStore()
+		store.Accounts[1].LastPolledAt = now.Add(-time.Hour)
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds: &entities.OAuthCredentials{
+				AccessToken: "a", RefreshToken: "ra", ExpiresAt: farFuture, Scopes: loginScopes(),
+			},
+			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
+		}
+		usage := &doubles.StubUsageRepository{
+			ByToken:    map[string]*entities.Usage{"a": healthyUsage()},
+			ErrByToken: map[string]error{"b": assert.AnError},
+		}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		require.NoError(t, command.Tick(now))
+		before := len(usage.Tokens)
+		require.NoError(t, command.Tick(now.Add(2*time.Minute)))
+
+		// then
+		assert.NotContains(t, usage.Tokens[before:], "b",
+			"the failing backup must wait out the cadence, not retry on the next tick")
+	})
 }

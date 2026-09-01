@@ -109,3 +109,65 @@ func TestOAuthCredentialsBlank(t *testing.T) {
 		assert.False(t, blank)
 	})
 }
+
+func TestOAuthCredentialsDegraded(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should report degraded for a set carrying no scopes", func(t *testing.T) {
+		t.Parallel()
+		// given: what an earlier ccswitch left behind, rebuilding from a bare response
+		creds := entities.OAuthCredentials{AccessToken: "a", RefreshToken: "r"}
+
+		// when
+		degraded := creds.Degraded()
+
+		// then
+		assert.True(t, degraded)
+	})
+
+	t.Run("should report degraded for scopes narrowed away from user:inference", func(t *testing.T) {
+		t.Parallel()
+		// given: a non-empty set that still fails the invariant. Claude Code discards
+		// its own refresh of this exactly as it does an empty one, so testing only
+		// for emptiness left the state sticky and invisible to the repair path.
+		creds := entities.OAuthCredentials{
+			AccessToken:  "a",
+			RefreshToken: "r",
+			Scopes:       []string{"user:profile", "user:file_upload"},
+		}
+
+		// when
+		degraded := creds.Degraded()
+
+		// then
+		assert.True(t, degraded)
+	})
+
+	t.Run("should not report degraded once the scopes name user:inference", func(t *testing.T) {
+		t.Parallel()
+		// given
+		creds := entities.OAuthCredentials{
+			AccessToken:  "a",
+			RefreshToken: "r",
+			Scopes:       []string{"user:profile", entities.ScopeInference},
+		}
+
+		// when
+		degraded := creds.Degraded()
+
+		// then
+		assert.False(t, degraded)
+	})
+
+	t.Run("should not report degraded for a long-lived token", func(t *testing.T) {
+		t.Parallel()
+		// given: no refresh token, so there is nothing to repair it with
+		creds := entities.OAuthCredentials{AccessToken: "long-lived"}
+
+		// when
+		degraded := creds.Degraded()
+
+		// then
+		assert.False(t, degraded)
+	})
+}

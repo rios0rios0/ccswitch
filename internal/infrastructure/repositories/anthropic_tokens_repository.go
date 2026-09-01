@@ -111,11 +111,16 @@ func (r *AnthropicTokensRepository) Refresh(
 }
 
 // requestScopes returns the scopes to ask the new access token to carry: the
-// account's own when they are known, and Claude Code's subscription set when
-// they are not. Sending none lets the endpoint decide, and a token that comes
-// back without `user:inference` is one Claude Code discards as not-claude.ai.
+// account's own when they satisfy the invariant, and Claude Code's subscription
+// set when they do not. Sending none lets the endpoint decide, and a token that
+// comes back without `user:inference` is one Claude Code discards as
+// not-claude.ai.
+//
+// Falling back for a degraded set — not only an empty one — is what lets the
+// repair widen it. Echoing a narrowed set back would ask the endpoint to mint
+// exactly the token that needs repairing, leaving the account stuck there.
 func requestScopes(creds entities.OAuthCredentials) []string {
-	if len(creds.Scopes) > 0 {
+	if !creds.Degraded() {
 		return creds.Scopes
 	}
 	return claudeCodeScopes()
@@ -142,21 +147,27 @@ func (r *AnthropicTokensRepository) toCredentials(
 	requested []string,
 ) *entities.OAuthCredentials {
 	nowMillis := r.now().UnixMilli()
+	granted := strings.Fields(resp.Scope)
 	minted := entities.OAuthCredentials{ //nolint:exhaustruct // the merge below fills the rest
 		AccessToken:  resp.AccessToken,
 		RefreshToken: resp.RefreshToken,
 		ExpiresAt:    nowMillis + resp.ExpiresIn*millisPerSecond,
-		Scopes:       strings.Fields(resp.Scope),
+		Scopes:       granted,
 	}
 	if resp.RefreshTokenExpiresIn != nil {
 		minted.RefreshTokenExpiresAt = nowMillis + *resp.RefreshTokenExpiresIn*millisPerSecond
 	}
 
 	merged := prior.WithRefreshed(minted)
-	if len(merged.Scopes) == 0 {
-		// Neither the response nor the prior credentials named any, so record the
-		// ones the token was minted for. Leaving them empty would keep the account
-		// looking degraded and refresh it on every single poll.
+	if len(granted) == 0 && merged.Degraded() {
+		// The endpoint did not say what it minted, and the set carried over from the
+		// prior credentials fails the scope invariant. What was asked for is the
+		// better record than a stale narrowed set: keeping the latter would leave
+		// the account degraded and refresh it on every poll without ever widening.
+		//
+		// This only applies when the response is silent. A response that does name
+		// its scopes is the truth even when that truth is a narrowed set — recording
+		// the request there would claim a scope the token does not carry.
 		merged.Scopes = requested
 	}
 	return &merged
