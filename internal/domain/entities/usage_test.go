@@ -144,3 +144,69 @@ func TestUsageRecoversAt(t *testing.T) {
 		assert.True(t, recovers.IsZero())
 	})
 }
+
+func TestUsageExhaustedIgnoresTheServerSeverity(t *testing.T) {
+	t.Parallel()
+
+	// criticalAt returns usage whose only active limit carries the server's early
+	// warning at the given percentage. The endpoint reports `critical` from around
+	// 95%, well before the account is actually spent.
+	criticalAt := func(percent float64) entities.Usage {
+		return entities.Usage{Limits: []entities.Limit{{
+			Kind:     "weekly_all",
+			Percent:  percent,
+			Severity: entities.SeverityCritical,
+			IsActive: true,
+		}}}
+	}
+
+	t.Run("should ignore the critical warning at the maximum threshold", func(t *testing.T) {
+		t.Parallel()
+		// given: an account the server calls critical while 5% of the window is left
+		usage := criticalAt(95)
+
+		// when
+		exhausted := usage.Exhausted(entities.MaxThreshold)
+
+		// then: asking for 100 means running the account to the wire
+		assert.False(t, exhausted)
+	})
+
+	t.Run("should ignore the critical warning below the maximum threshold too", func(t *testing.T) {
+		t.Parallel()
+		// given: the severity is a display band, not a ceiling -- honouring it would
+		// cap every threshold at the point the warning fires, making 99 behave like 90
+		usage := criticalAt(95)
+
+		// when
+		exhausted := usage.Exhausted(99)
+
+		// then
+		assert.False(t, exhausted)
+	})
+
+	t.Run("should exhaust once a limit reaches the threshold", func(t *testing.T) {
+		t.Parallel()
+		// given
+		usage := criticalAt(99)
+
+		// when
+		exhausted := usage.Exhausted(99)
+
+		// then
+		assert.True(t, exhausted)
+	})
+
+	t.Run("should not report a recovery time for a limit it does not count as spent", func(t *testing.T) {
+		t.Parallel()
+		// given: RecoversAt has to agree with Exhausted, or an account is held with a
+		// recovery time of zero and falls back to a blind cooldown
+		usage := criticalAt(95)
+
+		// when
+		recovers := usage.RecoversAt(entities.MaxThreshold)
+
+		// then
+		assert.True(t, recovers.IsZero())
+	})
+}

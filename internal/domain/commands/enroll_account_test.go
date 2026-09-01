@@ -40,12 +40,12 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		accounts := &doubles.InMemoryAccountsRepository{Store: &entities.Store{
 			Accounts: []entities.Account{{
 				Email:       "a@example.com",
-				Credentials: entities.OAuthCredentials{AccessToken: "old", RefreshToken: "r"},
+				Credentials: entities.OAuthCredentials{AccessToken: "old", RefreshToken: "r", Scopes: loginScopes()},
 			}},
 			Rotation: entities.RotationState{CurrentEmail: "a@example.com"},
 		}}
 		credentials := &doubles.StubCredentialsRepository{
-			Creds:    &entities.OAuthCredentials{AccessToken: "new", RefreshToken: "r"},
+			Creds:    &entities.OAuthCredentials{AccessToken: "new", RefreshToken: "r", Scopes: loginScopes()},
 			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
 		}
 		command := commands.NewEnrollAccountCommand(accounts, credentials)

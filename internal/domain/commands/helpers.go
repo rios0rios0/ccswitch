@@ -41,8 +41,12 @@ func pollUsage(
 	current := *creds
 	canRefresh := tokensRepo != nil && current.RefreshToken != ""
 
-	if current.AccessTokenExpired(nowMillis) && canRefresh {
-		refreshed, err := tokensRepo.Refresh(current.RefreshToken)
+	// A degraded set is refreshed even though its access token is still live: it
+	// is the repair path for accounts an earlier ccswitch stripped, and leaving
+	// them alone until the token ages out means the next rotation still installs a
+	// credential document Claude Code will not keep.
+	if (current.AccessTokenExpired(nowMillis) || current.Degraded()) && canRefresh {
+		refreshed, err := tokensRepo.Refresh(current)
 		if err != nil {
 			return nil, current, fmt.Errorf("failed to refresh access token: %w", err)
 		}
@@ -63,7 +67,7 @@ func pollUsage(
 		return nil, current, err
 	}
 
-	refreshed, refreshErr := tokensRepo.Refresh(current.RefreshToken)
+	refreshed, refreshErr := tokensRepo.Refresh(current)
 	if refreshErr != nil {
 		return nil, current, fmt.Errorf("failed to refresh rejected access token: %w", refreshErr)
 	}

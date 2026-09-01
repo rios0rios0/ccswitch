@@ -24,11 +24,11 @@ func TestStatusPersistsRefreshedCredentials(t *testing.T) {
 		store.Accounts[0].Credentials.ExpiresAt = 1
 		accounts := &doubles.InMemoryAccountsRepository{Store: store}
 		credentials := &doubles.StubCredentialsRepository{
-			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra", Scopes: loginScopes()},
 		}
 		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
 		tokens := &doubles.StubTokensRepository{
-			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2"},
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2", Scopes: loginScopes()},
 		}
 
 		// when
@@ -82,7 +82,7 @@ func TestStatusPersistsRefreshedCredentials(t *testing.T) {
 			ByToken: map[string]*entities.Usage{"a2": healthyUsage()},
 		}
 		tokens := &doubles.StubTokensRepository{
-			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2"},
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2", Scopes: loginScopes()},
 		}
 
 		// when
@@ -115,7 +115,7 @@ func TestStatusPersistsRefreshedCredentials(t *testing.T) {
 			},
 		}
 		tokens := &doubles.StubTokensRepository{
-			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2"},
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2", Scopes: loginScopes()},
 		}
 
 		// when

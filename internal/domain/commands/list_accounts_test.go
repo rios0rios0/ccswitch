@@ -31,7 +31,7 @@ func TestListAccountsPersistsRefreshedCredentials(t *testing.T) {
 		accounts := &doubles.InMemoryAccountsRepository{Store: store}
 		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
 		tokens := &doubles.StubTokensRepository{
-			Refreshed: &entities.OAuthCredentials{AccessToken: "b2", RefreshToken: "rb2"},
+			Refreshed: &entities.OAuthCredentials{AccessToken: "b2", RefreshToken: "rb2", Scopes: loginScopes()},
 		}
 
 		// when
@@ -85,7 +85,7 @@ func TestListAccountsPersistsRefreshedCredentials(t *testing.T) {
 			ErrByToken: map[string]error{"b2": errUsageUnreachable},
 		}
 		tokens := &doubles.StubTokensRepository{
-			Refreshed: &entities.OAuthCredentials{AccessToken: "b2", RefreshToken: "rb2"},
+			Refreshed: &entities.OAuthCredentials{AccessToken: "b2", RefreshToken: "rb2", Scopes: loginScopes()},
 		}
 
 		// when
@@ -109,11 +109,11 @@ func TestListAccountsPersistsRefreshedCredentials(t *testing.T) {
 		accounts := &doubles.InMemoryAccountsRepository{Store: store}
 		// Claude Code still holds exactly the pair the refresh consumed.
 		credentials := &doubles.StubCredentialsRepository{
-			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra", Scopes: loginScopes()},
 		}
 		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
 		tokens := &doubles.StubTokensRepository{
-			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2"},
+			Refreshed: &entities.OAuthCredentials{AccessToken: "a2", RefreshToken: "ra2", Scopes: loginScopes()},
 		}
 
 		// when
@@ -169,6 +169,7 @@ func TestListAccountsRefreshesRejectedToken(t *testing.T) {
 					AccessToken:  "stale",
 					RefreshToken: "ra",
 					ExpiresAt:    farFuture,
+					Scopes:       loginScopes(),
 				},
 			}},
 			Rotation: entities.RotationState{CurrentEmail: "a@example.com"},
@@ -181,7 +182,7 @@ func TestListAccountsRefreshesRejectedToken(t *testing.T) {
 			ByToken: map[string]*entities.Usage{"fresh": healthyUsage()},
 		}
 		tokens := &doubles.StubTokensRepository{
-			Refreshed: &entities.OAuthCredentials{AccessToken: "fresh", RefreshToken: "ra2"},
+			Refreshed: &entities.OAuthCredentials{AccessToken: "fresh", RefreshToken: "ra2", Scopes: loginScopes()},
 		}
 
 		// when

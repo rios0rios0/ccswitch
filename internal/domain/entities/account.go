@@ -36,11 +36,13 @@ func (a Account) SupportsUsagePolling() bool {
 	return !a.LongLived && a.Credentials.RefreshToken != ""
 }
 
-// Store is the persisted ccswitch state: the enrolled accounts plus the rotation
-// state that tracks the active account and exhaustion windows.
+// Store is the persisted ccswitch state: the enrolled accounts, the rotation
+// state that tracks the active account and exhaustion windows, and the settings
+// that can be changed while the daemon runs.
 type Store struct {
 	Accounts []Account     `json:"accounts"`
 	Rotation RotationState `json:"rotation"`
+	Settings Settings      `json:"settings,omitzero"`
 }
 
 // FindAccount returns a pointer to the account with the given email, or nil when

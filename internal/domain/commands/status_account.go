@@ -81,7 +81,7 @@ func (c *StatusCommand) Execute() error {
 		return nil
 	}
 
-	printUsage(os.Stdout, usage, c.config.Threshold)
+	printUsage(os.Stdout, usage, c.config.ResolveThreshold(store.Settings))
 	return nil
 }
 

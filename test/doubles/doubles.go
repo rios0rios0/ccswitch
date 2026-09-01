@@ -111,16 +111,29 @@ func (r *StubUsageRepository) Fetch(accessToken string) (*entities.Usage, error)
 
 // StubTokensRepository returns a canned refreshed credential set.
 type StubTokensRepository struct {
-	Refreshed    *entities.OAuthCredentials
-	Err          error
-	RefreshCalls int
+	Refreshed *entities.OAuthCredentials
+	// ByRefreshToken answers per refresh token, for suites that refresh more than
+	// one account in a single run.
+	ByRefreshToken map[string]*entities.OAuthCredentials
+	Err            error
+	RefreshCalls   int
+	// Received records every credential set Refresh was called with, in order, so
+	// a test can assert what the adapter was asked to preserve.
+	Received []entities.OAuthCredentials
 }
 
-// Refresh returns the configured refreshed credentials.
-func (r *StubTokensRepository) Refresh(_ string) (*entities.OAuthCredentials, error) {
+// Refresh returns the credentials configured for the incoming refresh token, or
+// the default set.
+func (r *StubTokensRepository) Refresh(
+	creds entities.OAuthCredentials,
+) (*entities.OAuthCredentials, error) {
 	r.RefreshCalls++
+	r.Received = append(r.Received, creds)
 	if r.Err != nil {
 		return nil, r.Err
+	}
+	if refreshed, ok := r.ByRefreshToken[creds.RefreshToken]; ok {
+		return refreshed, nil
 	}
 	return r.Refreshed, nil
 }

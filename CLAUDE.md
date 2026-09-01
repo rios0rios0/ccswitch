@@ -27,10 +27,10 @@ Run a single test with the standard toolchain, e.g.
 
 Clean Architecture; the domain layer must never import infrastructure.
 
-- `internal/domain/entities` — pure types (`Account`, `Store`, `Usage`, `Limit`, `RotationState`,
-  `Config`, `OAuthCredentials`, `AccountIdentity`).
+- `internal/domain/entities` — pure types (`Account`, `Store`, `Settings`, `Usage`, `Limit`,
+  `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`).
 - `internal/domain/commands` — one command per CLI verb (`enroll`, `list`, `status`, `use`,
-  `rotate`, `ensure`, `monitor`), each constructed from repository ports.
+  `rotate`, `ensure`, `threshold`, `monitor`), each constructed from repository ports.
 - `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`).
 - `internal/infrastructure/repositories` — adapters: JSON store, the credentials swappers
   (`FileCredentialsRepository` for `.credentials.json`, `KeychainCredentialsRepository` for the macOS
@@ -48,6 +48,39 @@ else branches on the OS; keep it that way.
 
 ## Invariants (get these wrong and rotation breaks silently)
 
+- **A refresh must preserve the credential document, never rebuild it.** The token endpoint answers
+  a refresh with the new pair, `expires_in`, `scope`, and (only when it rotated one)
+  `refresh_token_expires_in` — it never restates `subscriptionType` or `rateLimitTier`. Claude Code
+  will not persist its own later refresh of a credential set whose `scopes` do not name
+  `user:inference`: it classifies it as not-claude.ai and drops it, so the pair on disk goes stale,
+  the refresh after that answers `invalid_grant`, and Claude Code blanks the credentials. That is
+  the logout. `TokensRepository.Refresh` therefore takes the whole `OAuthCredentials` — it has to
+  name the scopes it wants in the request — and merges through
+  `OAuthCredentials.WithRefreshed`, the same way Claude Code's own merge does.
+- **Every enrolled account is polled, not only the active one.** Refresh tokens are rotated on every
+  use and expire in weeks, so a backup nobody touches between rotations goes stale in the store and
+  installing it hands Claude Code a token the server has forgotten. Backups poll on
+  `backupPollInterval` rather than every tick — the usage endpoint rate-limits — but a backup whose
+  token is expired or whose scopes are missing is attended to immediately, because that is exactly
+  the account the next rotation installs.
+- **Never capture blank credentials.** On `invalid_grant` Claude Code empties `claudeAiOauth` in
+  place (`accessToken: ""`, `refreshToken: ""`, `expiresAt: 0`) instead of removing it. Capturing
+  that overwrites the account's last good tokens with the marker saying they are gone and flips it
+  to `LongLived`, so it is never polled or selected again. Guard every capture with
+  `OAuthCredentials.Blank()`; a long-lived token still has an access token and is not blank.
+- **Writing a credential store is a read-modify-write on both platforms.** `.credentials.json` holds
+  `mcpOAuth` and `designOauth` beside `claudeAiOauth`, exactly as the macOS keychain item does.
+  Marshalling only `claudeAiOauth` over it signs the user out of every authenticated MCP server on
+  every rotation.
+- **Exhaustion is decided by the utilization percentage alone.** The usage endpoint's `severity` is
+  a display band, not a ceiling: it reads `critical` from around 95% while `locked_reason` is still
+  null and the account is perfectly usable. Treating it as exhaustion capped every threshold at the
+  point the warning fires, which made a threshold of 99 behave exactly like 90.
+- **The threshold in force comes from the store unless `--threshold` was named.** `ccswitch
+  threshold` persists it so the monitor — which reloads the store every tick — retunes without a
+  restart, which is why `daemonArgs` must not bake `--threshold` into the detached daemon unless the
+  caller passed it. Resolve it through `Config.ResolveThreshold(store.Settings)`, never by reading
+  `Config.Threshold` directly.
 - **Match accounts by identity, never by refresh token.** The server rotates the refresh token on
   every refresh, so a token match is a positive signal only — a non-match does *not* mean "different
   account". Resolve through `Store.MatchAccount` (matches on `accountUuid`/`email`, falling back to

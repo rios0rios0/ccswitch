@@ -45,8 +45,12 @@ func (c *EnsureActiveCommand) Execute(quiet bool) error {
 	// Code rotates the refresh token on every refresh, and treating a rotated
 	// token as a different account would overwrite freshly refreshed credentials
 	// with the stale stored ones, breaking the very account being launched.
+	// Blank credentials are Claude Code's dead-login marker, written when a refresh
+	// came back invalid_grant. They must never be captured over the stored tokens,
+	// and they are exactly the state a reinstall repairs, so fall through to the
+	// write below instead of matching on them.
 	onDisk, identity, readErr := c.credentials.Read()
-	if readErr == nil {
+	if readErr == nil && !onDisk.Blank() {
 		matched := store.MatchAccount(*onDisk, identity)
 		if matched == account {
 			return c.capture(store, account, onDisk)

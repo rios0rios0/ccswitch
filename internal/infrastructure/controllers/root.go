@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	defaultThreshold = 90.0
+	defaultThreshold = 99.0
 	defaultInterval  = 5 * time.Minute
 	// defaultClientID is Claude Code's public OAuth client identifier, used to
 	// refresh access tokens for backup accounts.
@@ -50,6 +50,11 @@ func NewRootCommand(version string) *cobra.Command {
 		SilenceErrors: false,
 	}
 	bindPersistentFlags(root, cfg)
+	// Whether --threshold was named decides who wins between the flag and the value
+	// `ccswitch threshold` persisted, so it has to be read after parsing.
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		cfg.ThresholdExplicit = cmd.Flags().Changed("threshold")
+	}
 
 	root.AddCommand(
 		newEnrollCommand(cfg),
@@ -57,6 +62,7 @@ func NewRootCommand(version string) *cobra.Command {
 		newStatusCommand(cfg),
 		newUseCommand(cfg),
 		newRotateCommand(cfg),
+		newThresholdCommand(cfg),
 		newEnsureCommand(cfg),
 		newMonitorCommand(cfg),
 		newVersionCommand(version),
@@ -69,7 +75,8 @@ func NewRootCommand(version string) *cobra.Command {
 func bindPersistentFlags(root *cobra.Command, cfg *entities.Config) {
 	flags := root.PersistentFlags()
 	flags.Float64Var(&cfg.Threshold, "threshold", cfg.Threshold,
-		"utilization percent (0-100) that triggers rotation")
+		"utilization percent (0-100) that triggers rotation; overrides the value stored by "+
+			"`ccswitch threshold` for this invocation only")
 	flags.DurationVar(&cfg.Interval, "interval", cfg.Interval, "monitor poll interval")
 	flags.BoolVar(&cfg.PreferPrimary, "prefer-primary", cfg.PreferPrimary,
 		"always run on the highest-priority account that has capacity, returning to it "+
