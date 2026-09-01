@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
+	"github.com/rios0rios0/ccswitch/test/doubles"
 )
 
 const (
@@ -16,9 +17,26 @@ const (
 	farFuture = int64(1) << 62
 )
 
+// loginScopes are the scopes an interactive Claude Code login carries. Real
+// credentials always have them, and a set without them is treated as degraded
+// and refreshed on sight, so fixtures have to carry them too.
+func loginScopes() []string {
+	return []string{"user:profile", "user:inference", "user:sessions:claude_code"}
+}
+
+// creds returns a complete credential set for the given token pair.
+func creds(access, refresh string) entities.OAuthCredentials {
+	return entities.OAuthCredentials{
+		AccessToken:  access,
+		RefreshToken: refresh,
+		Scopes:       loginScopes(),
+	}
+}
+
 // validCreds returns a complete credential set for the primary test account.
 func validCreds() *entities.OAuthCredentials {
-	return &entities.OAuthCredentials{AccessToken: "access", RefreshToken: "refresh"}
+	set := creds("access", "refresh")
+	return &set
 }
 
 // twoAccountStore returns a store with accounts "a" (current) and "b".
@@ -28,12 +46,12 @@ func twoAccountStore() *entities.Store {
 			{
 				Email:       "a@example.com",
 				Order:       0,
-				Credentials: entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+				Credentials: creds("a", "ra"),
 			},
 			{
 				Email:       "b@example.com",
 				Order:       1,
-				Credentials: entities.OAuthCredentials{AccessToken: "b", RefreshToken: "rb"},
+				Credentials: creds("b", "rb"),
 			},
 		},
 		Rotation: entities.RotationState{CurrentEmail: "a@example.com"},
@@ -48,6 +66,15 @@ func livePairStore() *entities.Store {
 	for i := range store.Accounts {
 		store.Accounts[i].Credentials.ExpiresAt = farFuture
 	}
+	return store
+}
+
+// expiredPrimaryStore returns a store in which only the primary's access token is
+// spent. A tick refreshes every account whose token has expired, so a test that
+// counts refreshes has to leave exactly one account refreshable.
+func expiredPrimaryStore() *entities.Store {
+	store := livePairStore()
+	store.Accounts[0].Credentials.ExpiresAt = 0
 	return store
 }
 
@@ -74,7 +101,7 @@ func longLivedFallbackStore() *entities.Store {
 			{
 				Email:       "a@example.com",
 				Order:       0,
-				Credentials: entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+				Credentials: creds("a", "ra"),
 			},
 			{
 				Email:       "long@example.com",
@@ -97,6 +124,22 @@ func monitorConfig() *entities.Config {
 // instead of returning to the primary.
 func roundRobinConfig() *entities.Config {
 	return &entities.Config{Threshold: thresholdPct, PreferPrimary: false}
+}
+
+// perAccountUsage keys canned usage by access token, which is what the monitor
+// needs now that a tick polls every enrolled account rather than only the active
+// one: a single canned response would make every account look identical.
+func perAccountUsage(byToken map[string]*entities.Usage) *doubles.StubUsageRepository {
+	return &doubles.StubUsageRepository{ByToken: byToken}
+}
+
+// exhaustedPrimaryUsage returns a usage stub in which the primary "a" is spent
+// and the backup "b" still has capacity.
+func exhaustedPrimaryUsage() *doubles.StubUsageRepository {
+	return perAccountUsage(map[string]*entities.Usage{
+		"a": exhaustedUsage(),
+		"b": healthyUsage(),
+	})
 }
 
 // exhaustedUsage returns usage whose active scoped limit is fully consumed.

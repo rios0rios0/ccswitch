@@ -19,7 +19,7 @@ func TestEnsureActiveCommandExecute(t *testing.T) {
 		// given
 		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{
-			Creds: &entities.OAuthCredentials{AccessToken: "b", RefreshToken: "rb"},
+			Creds: &entities.OAuthCredentials{AccessToken: "b", RefreshToken: "rb", Scopes: loginScopes()},
 		}
 		command := commands.NewEnsureActiveCommand(accounts, credentials)
 
@@ -38,7 +38,7 @@ func TestEnsureActiveCommandExecute(t *testing.T) {
 		// given
 		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{
-			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra"},
+			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra", Scopes: loginScopes()},
 		}
 		command := commands.NewEnsureActiveCommand(accounts, credentials)
 
@@ -56,7 +56,11 @@ func TestEnsureActiveCommandExecute(t *testing.T) {
 		// account, while disk carries the freshly refreshed pair for that same account
 		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{
-			Creds:    &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-rotated"},
+			Creds: &entities.OAuthCredentials{
+				AccessToken:  "a-new",
+				RefreshToken: "ra-rotated",
+				Scopes:       loginScopes(),
+			},
 			Identity: &entities.AccountIdentity{EmailAddress: "a@example.com"},
 		}
 		command := commands.NewEnsureActiveCommand(accounts, credentials)
@@ -78,7 +82,11 @@ func TestEnsureActiveCommandExecute(t *testing.T) {
 		// and their refresh token has already rotated past the stored one
 		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{
-			Creds:    &entities.OAuthCredentials{AccessToken: "a-new", RefreshToken: "ra-rotated"},
+			Creds: &entities.OAuthCredentials{
+				AccessToken:  "a-new",
+				RefreshToken: "ra-rotated",
+				Scopes:       loginScopes(),
+			},
 			Identity: nil,
 		}
 		command := commands.NewEnsureActiveCommand(accounts, credentials)
@@ -98,7 +106,7 @@ func TestEnsureActiveCommandExecute(t *testing.T) {
 		// the installed credentials are known to belong to a different account
 		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{
-			Creds:    &entities.OAuthCredentials{AccessToken: "b", RefreshToken: "rb"},
+			Creds:    &entities.OAuthCredentials{AccessToken: "b", RefreshToken: "rb", Scopes: loginScopes()},
 			Identity: nil,
 		}
 		command := commands.NewEnsureActiveCommand(accounts, credentials)

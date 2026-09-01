@@ -11,11 +11,12 @@ authenticates as the next account on its next launch.
 
 Clean Architecture with a strict domain / infrastructure split:
 
-- `internal/domain/entities` — pure model: `Account`, `Store`, `Usage`, `Limit`, `RotationState`,
-  `Config`, `OAuthCredentials`, `AccountIdentity`. No infrastructure imports.
+- `internal/domain/entities` — pure model: `Account`, `Store`, `Settings`, `Usage`, `Limit`,
+  `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`. No infrastructure imports.
 - `internal/domain/commands` — application logic: `EnrollAccountCommand`, `ListAccountsCommand`,
   `StatusCommand`, `UseAccountCommand`, `RotateAccountCommand`, `EnsureActiveCommand`,
-  `MonitorCommand`. Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon).
+  `SetThresholdCommand`, `MonitorCommand`. Each takes ports and exposes `Execute` (or `Run`/`Tick`
+  for the daemon).
 - `internal/domain/repositories` — ports: `AccountsRepository`, `CredentialsRepository`,
   `UsageRepository`, `TokensRepository`, `SessionsRepository`.
 - `internal/infrastructure/repositories` — adapters: `JSONAccountsRepository` (atomic 0600 store),
@@ -30,6 +31,32 @@ Clean Architecture with a strict domain / infrastructure split:
 
 ## Invariants
 
+- **A refresh must preserve the credential document, never rebuild it.** The token endpoint answers
+  a refresh with the new pair, `expires_in`, `scope` and — only when it rotated one —
+  `refresh_token_expires_in`; it never restates `subscriptionType` or `rateLimitTier`. Claude Code
+  will not persist its own later refresh of a credential set whose `scopes` omit `user:inference`,
+  classifying it as not-claude.ai, so a rebuilt document goes stale on disk, `invalid_grant`s, and
+  is blanked — the logout. `TokensRepository.Refresh` takes the whole `OAuthCredentials` so it can
+  name the scopes it wants, and merges through `OAuthCredentials.WithRefreshed`.
+- **Every enrolled account is polled, not only the active one.** Refresh tokens rotate on every use
+  and expire in weeks, so an untouched backup goes stale in the store and installing it hands Claude
+  Code a token the server has forgotten. Backups poll on `backupPollInterval` rather than every tick
+  because the usage endpoint rate-limits, but one whose token is expired or whose scopes are missing
+  is polled at once — it is the account the next rotation installs.
+- **Never capture blank credentials.** On `invalid_grant` Claude Code empties `claudeAiOauth` in
+  place instead of removing it; capturing that replaces the account's last good tokens with the
+  marker saying they are gone and flips it to `LongLived`. Guard captures with
+  `OAuthCredentials.Blank()` — a long-lived token still has an access token and is not blank.
+- **Writing `.credentials.json` is a read-modify-write, exactly like the keychain item.** It holds
+  `mcpOAuth` and `designOauth` beside `claudeAiOauth`, so marshalling only `claudeAiOauth` over it
+  signs the user out of every authenticated MCP server on every rotation.
+- **Exhaustion is decided by the utilization percentage alone.** The endpoint's `severity` is a
+  display band, not a ceiling — `critical` from about 95% with `locked_reason` still null — so
+  treating it as exhaustion capped every threshold at the point the warning fires.
+- **The threshold comes from the store unless `--threshold` was named.** `ccswitch threshold`
+  persists it so the daemon retunes without a restart, which is why `daemonArgs` must not bake
+  `--threshold` in unless the caller passed it. Resolve through
+  `Config.ResolveThreshold(store.Settings)`, never `Config.Threshold` directly.
 - **Match accounts by identity, never by refresh token.** The server rotates the refresh token on
   every refresh, so `OAuthCredentials.SameAccountAs` is only a positive signal — a false result does
   not mean "different account". Use `Store.MatchAccount`, which resolves by `accountUuid`/`email`

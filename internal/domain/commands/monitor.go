@@ -11,7 +11,15 @@ import (
 	"github.com/rios0rios0/ccswitch/internal/domain/repositories"
 )
 
-const defaultCooldown = time.Hour
+const (
+	defaultCooldown = time.Hour
+	// backupPollInterval is how often an account other than the active one is
+	// polled. The active account is polled every tick because the rotation
+	// decision turns on it; a backup only has to be seen often enough to keep its
+	// token alive and to notice its limits reset, and polling every account on
+	// every tick multiplies request volume against an endpoint that rate-limits.
+	backupPollInterval = 15 * time.Minute
+)
 
 // MonitorCommand is the always-on daemon loop that polls usage and rotates the
 // active account when it is exhausted.
@@ -48,7 +56,7 @@ func NewMonitorCommand(
 // Run polls at the configured interval until the context is cancelled.
 func (c *MonitorCommand) Run(ctx context.Context) error {
 	logger.Infof("[ccswitch] monitor started (interval %s, threshold %.0f%%)",
-		c.config.Interval, c.config.Threshold)
+		c.config.Interval, c.effectiveThreshold())
 	c.tickOnce()
 
 	ticker := time.NewTicker(c.config.Interval)
@@ -71,8 +79,20 @@ func (c *MonitorCommand) tickOnce() {
 	}
 }
 
+// effectiveThreshold reads the threshold that applies right now, which means
+// reloading the store: `ccswitch threshold` persists a new value there and a
+// running daemon has to honour it without being restarted. A store that cannot
+// be read falls back to the configured value.
+func (c *MonitorCommand) effectiveThreshold() float64 {
+	store, err := c.accounts.Load()
+	if err != nil {
+		return c.config.Threshold
+	}
+	return c.config.ResolveThreshold(store.Settings)
+}
+
 // Tick performs one monitor cycle: capture the active credentials into the store,
-// poll usage for the current account, and rotate when it is exhausted.
+// poll every account that can be polled, and apply the rotation policy.
 func (c *MonitorCommand) Tick(now time.Time) error {
 	store, err := c.accounts.Load()
 	if err != nil {
@@ -82,6 +102,7 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 		return nil
 	}
 
+	threshold := c.config.ResolveThreshold(store.Settings)
 	store.Rotation.ClearExpired(now)
 	c.syncActiveCredentials(store)
 
@@ -90,31 +111,9 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 		return c.accounts.Save(store)
 	}
 
-	if !current.SupportsUsagePolling() {
-		c.reconcileUnpolled(store, current, now)
-		return c.accounts.Save(store)
-	}
-
-	previous := current.Credentials
-	usage, creds, pollErr := pollUsage(c.usage, c.tokens, &current.Credentials, now.UnixMilli())
-	if pollErr != nil {
-		logger.Warnf("[ccswitch] usage poll for %s failed: %v", current.Email, pollErr)
-		// A refresh that already succeeded rotated the token server-side and cannot
-		// be undone, so its result is kept even though the usage call failed:
-		// discarding it would strand both the store and the credentials file on a
-		// token the server has already invalidated. When the refresh itself failed,
-		// pollUsage hands back the untouched credentials and both calls are no-ops.
-		current.Credentials = creds
-		publishRefreshed(c.credentials, previous, current)
-		return c.accounts.Save(store)
-	}
-
-	current.Credentials = creds
-	current.LastUsage = usage
-	current.LastPolledAt = now
-
-	publishRefreshed(c.credentials, previous, current)
-	c.reconcile(store, current, usage, now)
+	c.pollAll(store, current, now, threshold)
+	c.reconcile(store, current, now)
+	c.installPending(store)
 	return c.accounts.Save(store)
 }
 
@@ -132,60 +131,107 @@ func (c *MonitorCommand) resolveCurrent(store *entities.Store) *entities.Account
 	return store.FindAccount(store.Rotation.CurrentEmail)
 }
 
-// syncActiveCredentials captures the on-disk credentials, which Claude Code may
-// have refreshed, back into the matching stored account so backup tokens stay
-// current. The account is resolved by identity rather than by refresh token,
-// because the refresh token rotates on every refresh (see Store.MatchAccount).
-func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
-	onDisk, identity, err := c.credentials.Read()
-	if err != nil || onDisk == nil {
-		return
-	}
-	account := store.MatchAccount(*onDisk, identity)
-	if account == nil && !identityKnown(identity) {
-		// With no identity, credentials whose refresh token has already rotated
-		// match nothing, and skipping the capture would leave the store pinned to
-		// the rotated-away token — the 401 loop this sync exists to prevent. The
-		// monitor installs the current account and Claude Code only refreshes it
-		// in place, so attribute them to it.
-		account = store.FindAccount(store.Rotation.CurrentEmail)
-		if account != nil {
-			logger.Debugf("[ccswitch] attributed installed credentials to %s (no identity available)",
-				account.Email)
+// pollAll polls every account whose usage can be read — not only the active one —
+// and rewrites its exhaustion marker from what the poll saw.
+//
+// Polling the backups is what keeps them usable. A refresh token is only valid
+// for a few weeks and is rotated on every use, so an account that is never
+// touched between rotations goes stale in the store; installing it then hands
+// Claude Code a token the server has already forgotten, which answers
+// invalid_grant, which is the logout. Polling every account also keeps the
+// rotation decision honest: an exhausted account is released the moment its
+// limits actually reset rather than when its recorded reset time says so, and a
+// threshold change takes effect against fresh numbers instead of stale markers.
+func (c *MonitorCommand) pollAll(
+	store *entities.Store,
+	current *entities.Account,
+	now time.Time,
+	threshold float64,
+) {
+	for _, ordered := range store.Ordered() {
+		account := store.FindAccount(ordered.Email)
+		if account == nil || !account.SupportsUsagePolling() {
+			continue
 		}
-	}
-	if account == nil {
-		return
-	}
-
-	account.Credentials = *onDisk
-	// Credentials carrying a refresh token come from an interactive login and can
-	// be polled again, so an account previously enrolled from a long-lived token
-	// recovers its monitoring as soon as it is logged in normally.
-	account.LongLived = onDisk.RefreshToken == ""
-	if identity != nil && identity.EmailAddress != "" {
-		account.Identity = *identity
+		if !shouldPoll(account, current, now) {
+			continue
+		}
+		c.pollAccount(store, account, now, threshold)
 	}
 }
 
-// reconcile records how long the current account stays exhausted and then moves
-// to whichever account the rotation policy selects. The exhaustion window is
-// marked before the selection runs so the current account is excluded from
-// being chosen as its own replacement.
+// shouldPoll reports whether this tick polls the given account.
+func shouldPoll(account, current *entities.Account, now time.Time) bool {
+	if account.Email == current.Email {
+		return true
+	}
+	// A spent or stripped token is attended to at once rather than on the slow
+	// cadence: a backup whose credentials have gone stale is precisely the one a
+	// rotation is about to install, and refreshing it late is the logout.
+	if account.Credentials.AccessTokenExpired(now.UnixMilli()) || account.Credentials.Degraded() {
+		return true
+	}
+	return now.Sub(account.LastPolledAt) >= backupPollInterval
+}
+
+// pollAccount polls one account, persists whatever the poll refreshed, and marks
+// or clears its exhaustion.
+func (c *MonitorCommand) pollAccount(
+	store *entities.Store,
+	account *entities.Account,
+	now time.Time,
+	threshold float64,
+) {
+	previous := account.Credentials
+	usage, creds, err := pollUsage(c.usage, c.tokens, &account.Credentials, now.UnixMilli())
+	// Keep the credentials even when the poll failed: a refresh that already
+	// succeeded rotated the token server-side and cannot be undone, so discarding
+	// it would strand the store on a token the server has invalidated. When the
+	// refresh itself failed, pollUsage hands back the untouched credentials and
+	// both calls below are no-ops.
+	account.Credentials = creds
+	publishRefreshed(c.credentials, previous, account)
+
+	// Record the attempt, not just the success: this timestamp is the backup poll
+	// cadence's only input, so leaving it behind on a failure would make a failing
+	// account the one polled on every single tick — and the endpoint pushing back
+	// is exactly the condition the cadence exists to survive.
+	account.LastPolledAt = now
+
+	if err != nil {
+		logger.Warnf("[ccswitch] usage poll for %s failed: %v", account.Email, err)
+		return
+	}
+
+	account.LastUsage = usage
+	if account.Credentials.Degraded() {
+		// The repair refresh in pollUsage ran and the scopes still fail the
+		// invariant, so the endpoint is refusing to mint them. Retrying forever
+		// would burn a refresh token per poll, so say so instead of looping quietly.
+		logger.Warnf("[ccswitch] %s still lacks the %q scope after a refresh; "+
+			"Claude Code will discard its credentials — log in again with `claude` and re-enroll",
+			account.Email, entities.ScopeInference)
+	}
+
+	if !usage.Exhausted(threshold) {
+		store.Rotation.ClearExhausted(account.Email)
+		return
+	}
+	recovers := usage.RecoversAt(threshold)
+	if recovers.IsZero() {
+		recovers = now.Add(defaultCooldown)
+	}
+	store.Rotation.MarkExhausted(account.Email, recovers)
+}
+
+// reconcile moves to whichever account the rotation policy selects, given the
+// exhaustion markers pollAll has just refreshed.
 func (c *MonitorCommand) reconcile(
 	store *entities.Store,
 	current *entities.Account,
-	usage *entities.Usage,
 	now time.Time,
 ) {
-	exhausted := usage.Exhausted(c.config.Threshold)
-	if exhausted {
-		recovers := usage.RecoversAt(c.config.Threshold)
-		if recovers.IsZero() {
-			recovers = now.Add(defaultCooldown)
-		}
-		store.Rotation.MarkExhausted(current.Email, recovers)
-	}
+	exhausted := store.Rotation.IsExhausted(current.Email, now)
 
 	target, ok := c.selectTarget(store, current, now, exhausted)
 	if !ok {
@@ -195,28 +241,12 @@ func (c *MonitorCommand) reconcile(
 		}
 		return
 	}
-	c.switchTo(store, current, &target, switchReason(usage, exhausted))
-}
-
-// reconcileUnpolled applies the rotation policy to a current account whose usage
-// cannot be read. Such an account is never marked exhausted — that needs usage
-// data — so it is only left when the policy prefers a higher-priority account,
-// which is what returns the monitor to the primary once the primary recovers.
-func (c *MonitorCommand) reconcileUnpolled(
-	store *entities.Store,
-	current *entities.Account,
-	now time.Time,
-) {
-	target, ok := c.selectTarget(store, current, now, false)
-	if !ok {
-		return
-	}
-	c.switchTo(store, current, &target, switchReason(nil, false))
+	c.switchTo(store, current, &target, switchReason(current.LastUsage, exhausted))
 }
 
 // switchReason renders the human-readable cause of a switch.
 func switchReason(usage *entities.Usage, exhausted bool) string {
-	if !exhausted {
+	if !exhausted || usage == nil {
 		return "higher-priority account recovered"
 	}
 	binding, _ := usage.BindingLimit()
@@ -280,4 +310,85 @@ func (c *MonitorCommand) switchTo(
 	}
 	store.Rotation.CurrentEmail = target.Email
 	logger.Infof("[ccswitch] switched %s -> %s (%s)", current.Email, target.Email, reason)
+}
+
+// installPending completes a switch that an earlier tick could only record.
+//
+// When a session is running switchTo moves the current pointer but leaves the
+// credentials alone, and nothing retried the write: the swap waited on the shell
+// wrapper calling `ensure`, and never happened at all for anyone not using it.
+// Retrying here means the deferred switch lands as soon as the last session
+// exits.
+func (c *MonitorCommand) installPending(store *entities.Store) {
+	account := store.FindAccount(store.Rotation.CurrentEmail)
+	if account == nil {
+		return
+	}
+	onDisk, identity, err := c.credentials.Read()
+	if err != nil || onDisk == nil {
+		return
+	}
+	if store.MatchAccount(*onDisk, identity) == account {
+		return
+	}
+	// Without a usable identity, credentials whose refresh token has rotated match
+	// nothing, and installing on that guess would overwrite the pair Claude Code
+	// just refreshed with a stale one.
+	if !identityKnown(identity) {
+		return
+	}
+	if c.sessions != nil && c.sessions.ClaudeRunning() {
+		return
+	}
+
+	if err = c.credentials.Write(&account.Credentials, &account.Identity); err != nil {
+		logger.Warnf("[ccswitch] failed to install pending switch to %s: %v", account.Email, err)
+		return
+	}
+	logger.Infof("[ccswitch] installed pending switch to %s", account.Email)
+}
+
+// syncActiveCredentials captures the on-disk credentials, which Claude Code may
+// have refreshed, back into the matching stored account so backup tokens stay
+// current. The account is resolved by identity rather than by refresh token,
+// because the refresh token rotates on every refresh (see Store.MatchAccount).
+func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
+	onDisk, identity, err := c.credentials.Read()
+	if err != nil || onDisk == nil {
+		return
+	}
+	// Claude Code blanks claudeAiOauth when a refresh comes back invalid_grant,
+	// leaving empty tokens on disk rather than removing the block. Capturing that
+	// would overwrite the account's last good credentials with the marker saying
+	// they are gone, and flip it to LongLived so it is never polled again.
+	if onDisk.Blank() {
+		logger.Debugf("[ccswitch] installed credentials are blank; leaving the store untouched")
+		return
+	}
+
+	account := store.MatchAccount(*onDisk, identity)
+	if account == nil && !identityKnown(identity) {
+		// With no identity, credentials whose refresh token has already rotated
+		// match nothing, and skipping the capture would leave the store pinned to
+		// the rotated-away token — the 401 loop this sync exists to prevent. The
+		// monitor installs the current account and Claude Code only refreshes it
+		// in place, so attribute them to it.
+		account = store.FindAccount(store.Rotation.CurrentEmail)
+		if account != nil {
+			logger.Debugf("[ccswitch] attributed installed credentials to %s (no identity available)",
+				account.Email)
+		}
+	}
+	if account == nil {
+		return
+	}
+
+	account.Credentials = *onDisk
+	// Credentials carrying a refresh token come from an interactive login and can
+	// be polled again, so an account previously enrolled from a long-lived token
+	// recovers its monitoring as soon as it is logged in normally.
+	account.LongLived = onDisk.RefreshToken == ""
+	if identity != nil && identity.EmailAddress != "" {
+		account.Identity = *identity
+	}
 }

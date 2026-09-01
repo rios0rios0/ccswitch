@@ -34,3 +34,14 @@ func (s *RotationState) ClearExpired(now time.Time) {
 		}
 	}
 }
+
+// ClearExhausted removes the exhaustion marker for one account, which a fresh
+// poll showing it back under the threshold makes stale.
+//
+// A marker is a cache of what the last poll saw, not a lease: it is recorded so
+// that an account nobody is polling still looks exhausted, and so the reason is
+// visible. Once a poll contradicts it — because the limits reset early, or
+// because the threshold was raised — keeping it would strand the account.
+func (s *RotationState) ClearExhausted(email string) {
+	delete(s.ExhaustedUntil, email)
+}

@@ -34,18 +34,28 @@ type Usage struct {
 	ExtraUsage bool    `json:"extraUsage"`
 }
 
-// Exhausted reports whether any active limit has reached the given percent
-// threshold or has been flagged critical by the server.
+// Exhausted reports whether any active limit is spent at the given threshold.
 func (u Usage) Exhausted(thresholdPercent float64) bool {
 	for _, limit := range u.Limits {
-		if !limit.IsActive {
-			continue
-		}
-		if limit.Severity == SeverityCritical || limit.Percent >= thresholdPercent {
+		if limit.IsActive && limitSpent(limit, thresholdPercent) {
 			return true
 		}
 	}
 	return false
+}
+
+// limitSpent reports whether one limit counts as exhausted at the given
+// threshold. The utilization percentage is the sole criterion: the threshold is
+// the tolerance the user set, so the number they choose is the number that
+// applies.
+//
+// The server's `critical` severity is deliberately not a trigger of its own. It
+// is a display band rather than a ceiling — it is reported from around 95% with
+// `locked_reason` still null, i.e. while the account is perfectly usable — so
+// honouring it independently capped every threshold at the point the warning
+// fires and made 99 behave exactly like 90.
+func limitSpent(limit Limit, thresholdPercent float64) bool {
+	return limit.Percent >= thresholdPercent
 }
 
 // BindingLimit returns the active limit with the highest utilization and whether
@@ -76,10 +86,7 @@ func (u Usage) BindingLimit() (Limit, bool) {
 func (u Usage) RecoversAt(thresholdPercent float64) time.Time {
 	var latest time.Time
 	for _, limit := range u.Limits {
-		if !limit.IsActive {
-			continue
-		}
-		if limit.Severity != SeverityCritical && limit.Percent < thresholdPercent {
+		if !limit.IsActive || !limitSpent(limit, thresholdPercent) {
 			continue
 		}
 		if limit.ResetsAt.After(latest) {

@@ -1,12 +1,18 @@
 package repositories
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 )
+
+// credentialsJSONKey is the key holding the Claude Code OAuth tokens inside the
+// credential store, whether that store is the file or the macOS keychain item.
+const credentialsJSONKey = "claudeAiOauth"
 
 // claudeCredentialsFile mirrors the on-disk shape of ~/.claude/.credentials.json.
 type claudeCredentialsFile struct {
@@ -49,12 +55,34 @@ func (r *FileCredentialsRepository) Read() (*entities.OAuthCredentials, *entitie
 // Write atomically installs the given credentials and best-effort updates the
 // oauthAccount block of the Claude state file. A failure to update the state file
 // is not fatal because the credentials are what authenticate the CLI.
+//
+// Like its keychain counterpart the write is a read-modify-write, because
+// claudeAiOauth is not the only thing the file holds: alongside it sit mcpOAuth,
+// the tokens of every authenticated MCP server, and designOauth. Marshalling only
+// claudeAiOauth over the file would sign the user out of all of them on every
+// rotation, so every sibling entry is carried across untouched — held as
+// [json.RawMessage], so their values survive byte for byte — and only claudeAiOauth
+// is replaced. The document is re-marshalled, so its indentation and key order
+// are not preserved, only its content.
 func (r *FileCredentialsRepository) Write(
 	creds *entities.OAuthCredentials,
 	identity *entities.AccountIdentity,
 ) error {
-	file := claudeCredentialsFile{ClaudeAiOauth: *creds}
-	data, err := json.MarshalIndent(file, "", "  ")
+	root, err := r.readRoot()
+	if err != nil {
+		return err
+	}
+
+	// gosec flags marshalling a struct whose JSON keys look like secrets. They are
+	// secrets, and serializing them is the point: this is the credential store
+	// Claude Code reads them back from.
+	encoded, err := json.Marshal(creds) //nolint:gosec // G117: writing tokens to the credential store is the purpose
+	if err != nil {
+		return fmt.Errorf("failed to marshal credentials: %w", err)
+	}
+	root[credentialsJSONKey] = encoded
+
+	data, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal credentials: %w", err)
 	}
@@ -70,4 +98,29 @@ func (r *FileCredentialsRepository) Write(
 func (r *FileCredentialsRepository) Exists() bool {
 	_, err := os.Stat(r.credentialsPath)
 	return err == nil
+}
+
+// readRoot returns the stored credentials document as a key-preserving map, or an
+// empty map when the file does not exist yet. A file that exists but cannot be
+// read or parsed is an error rather than an empty map, so that a document which
+// is merely unavailable is never silently replaced.
+func (r *FileCredentialsRepository) readRoot() (map[string]json.RawMessage, error) {
+	root := map[string]json.RawMessage{}
+
+	data, err := os.ReadFile(r.credentialsPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return root, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read credentials file: %w", err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return root, nil
+	}
+	if err = json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf(
+			"refusing to overwrite unparsable credentials file %q (it may hold MCP tokens): %w",
+			r.credentialsPath, err)
+	}
+	return root, nil
 }

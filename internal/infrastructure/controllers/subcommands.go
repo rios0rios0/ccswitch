@@ -3,12 +3,50 @@ package controllers
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/commands"
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 )
+
+// newThresholdCommand builds the `threshold` subcommand, which reads or sets the
+// rotation threshold that the store carries and the daemon rereads every tick.
+func newThresholdCommand(cfg *entities.Config) *cobra.Command {
+	var reset bool
+	cmd := &cobra.Command{
+		Use:   "threshold [percent]",
+		Short: "Show or set the utilization percent that triggers rotation",
+		Long: "Show the rotation threshold, or set it to the given percent.\n\n" +
+			"A threshold set here is persisted in the store, so a running monitor daemon " +
+			"picks it up on its next tick without being restarted, and it is applied " +
+			"immediately: every account is repolled and the highest-priority one whose " +
+			"utilization is below the new threshold becomes active.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			deps := newDeps(cfg)
+			command := commands.NewSetThresholdCommand(
+				deps.config, deps.accounts, deps.credentials,
+				deps.usage, deps.tokens, deps.sessions,
+			)
+			switch {
+			case reset:
+				return command.Reset()
+			case len(args) == 0:
+				return command.Show()
+			}
+			threshold, err := strconv.ParseFloat(args[0], float64BitSize)
+			if err != nil {
+				return fmt.Errorf("invalid threshold %q: %w", args[0], err)
+			}
+			return command.Execute(threshold)
+		},
+	}
+	cmd.Flags().BoolVar(&reset, "reset", false,
+		"drop the stored threshold and go back to the built-in default")
+	return cmd
+}
 
 // newEnrollCommand builds the `enroll` subcommand.
 func newEnrollCommand(cfg *entities.Config) *cobra.Command {

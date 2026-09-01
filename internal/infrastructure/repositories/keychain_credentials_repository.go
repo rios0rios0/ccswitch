@@ -22,10 +22,6 @@ const (
 	// stores its credentials in the macOS login keychain.
 	KeychainServiceName = "Claude Code-credentials"
 
-	// credentialsJSONKey is the key holding the OAuth tokens inside the keychain
-	// item's JSON document.
-	credentialsJSONKey = "claudeAiOauth"
-
 	// securityStdinLimit is the longest single command line that `security -i`
 	// accepts on stdin. Longer lines are SILENTLY TRUNCATED: the item is written
 	// with a partial payload and the exit status cannot be relied on to report it.

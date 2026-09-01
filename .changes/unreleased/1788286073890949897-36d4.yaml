@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'advanced an account''s poll timestamp on a failed attempt, not only a successful one. It is the backup poll cadence''s sole input, so an account whose polls were failing was retried on every tick instead of every cadence -- and an endpoint answering `429` is exactly the condition the cadence exists to survive'
+time: '2026-09-01T18:07:53.890903382Z'

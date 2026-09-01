@@ -74,14 +74,23 @@ func runMonitorForeground(deps *deps) error {
 
 // daemonArgs reconstructs the flags the detached daemon must run with so it uses
 // the same configuration as the foreground invocation.
+//
+// --threshold is passed on only when the caller named it. A daemon started with
+// the flag baked in would treat it as an explicit override and ignore the value
+// `ccswitch threshold` persists, which is precisely the in-flight retuning that
+// command exists to provide.
 func daemonArgs(cfg *entities.Config) []string {
-	return []string{
+	args := []string{
 		"monitor",
 		"--interval", cfg.Interval.String(),
-		"--threshold", strconv.FormatFloat(cfg.Threshold, 'f', floatPrecision, float64BitSize),
 		"--store", cfg.StorePath,
 		"--credentials", cfg.CredentialsPath,
 		"--claude-json", cfg.ClaudeJSONPath,
 		fmt.Sprintf("--prefer-primary=%t", cfg.PreferPrimary),
 	}
+	if cfg.ThresholdExplicit {
+		args = append(args,
+			"--threshold", strconv.FormatFloat(cfg.Threshold, 'f', floatPrecision, float64BitSize))
+	}
+	return args
 }

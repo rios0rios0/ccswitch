@@ -53,6 +53,9 @@ func (c *ListAccountsCommand) Execute() error {
 
 	warnAPIKeyOverride()
 
+	fmt.Fprintf(os.Stdout, "rotation threshold: %.0f%%\n",
+		c.config.ResolveThreshold(store.Settings))
+
 	now := c.now()
 	ordered := store.Ordered()
 	refreshed := false

@@ -12,8 +12,8 @@
 
 ## Features
 
-- **Usage monitoring**: a background daemon polls the Claude usage endpoint (`/api/oauth/usage`) and knows when the active account is exhausted.
-- **Automatic rotation**: when the active account crosses a utilization threshold (default 90%, or a `critical` limit), it swaps in the next account that still has capacity.
+- **Usage monitoring**: a background daemon polls the Claude usage endpoint (`/api/oauth/usage`) for every enrolled account, so it knows when the active one is exhausted and keeps each backup's tokens alive.
+- **Automatic rotation**: when the active account crosses a utilization threshold (default 99%), it swaps in the next account that still has capacity. Retune it at any time with `ccswitch threshold <percent>` — a running daemon picks the new value up without a restart.
 - **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
@@ -26,13 +26,48 @@ Claude Code stores its subscription OAuth tokens under `claudeAiOauth` — in `~
 
 Rotation happens at launch boundaries, not mid-conversation: a running session that hits its limit is not hot-switched; you exit and relaunch (optionally `claude --continue`) and the new account is already active.
 
+Every enrolled account is polled, not just the active one — the backups on a slower cadence. That is
+what keeps a backup usable: the OAuth refresh token is rotated on every use and expires in weeks, so
+an account nobody touches between rotations goes stale in the store, and installing a stale pair
+hands Claude Code a token the server has already forgotten. Claude Code answers the resulting
+`invalid_grant` by blanking its stored credentials, which is what a logout on rotation actually is.
+
+For the same reason a refresh preserves the whole credential document rather than rebuilding it from
+the response. The token endpoint returns the new pair and little else, and Claude Code will not
+persist its own later refresh of a credential set whose `scopes` do not name `user:inference` — it
+classifies it as not-claude.ai and drops it — so a refresh names the scopes it wants, reads `scope`
+and `refresh_token_expires_in` back, and merges onto the credentials it replaces.
+
 Enrolled accounts are matched to the credentials on disk by their **identity** (`emailAddress`/`accountUuid` from `~/.claude.json`), never by their refresh token. The server rotates the refresh token on every refresh, so matching on it would stop recognizing the account the first time Claude Code refreshed — leaving the store pinned to a token that has been rotated away, which then fails every refresh with `401`.
+
+### The rotation threshold
+
+An account counts as exhausted once any of its active limits reaches the threshold, and the
+utilization percentage is the only test. The usage endpoint also reports a `severity` per limit, but
+that is a display band rather than a ceiling: it reads `critical` from around 95% with
+`locked_reason` still null — while the account is perfectly usable — so treating it as exhaustion
+capped every threshold at the point the warning fires and made a threshold of 99 behave exactly
+like 90.
+
+The threshold set by `ccswitch threshold` lives in the store rather than on a command line, which is
+what lets it change in flight: the monitor reloads the store on every tick and reads it from there.
+An explicit `--threshold` still wins for the invocation that passes it.
+
+```bash
+ccswitch threshold          # show the threshold in force and where it comes from
+ccswitch threshold 100      # run each account to the wire before rotating
+ccswitch threshold --reset  # back to the built-in default
+```
+
+Setting one applies it immediately as well as persisting it: every account is repolled, the
+exhaustion markers the old threshold produced are rewritten from what the polls saw, and the
+highest-priority account below the new threshold becomes active.
 
 ### Rotation policy
 
 By default (`--prefer-primary`) the monitor always runs on the **highest-priority account that has capacity**. Priority is enrollment order, so the first account you enroll is the primary — check the numbering with `ccswitch list`. It falls back to a backup only while the primary is exhausted, and switches back to the primary as soon as the primary's limits reset.
 
-An exhausted account is held until **every** limit that put it over the threshold has reset — not merely the soonest one. That matters when a short window (the 5-hour session) resets while a long one (the weekly limit) is still saturated: releasing the account early would select it, immediately exhaust it again, and flap.
+An exhausted account is held until **every** limit that put it over the threshold has reset — not merely the soonest one. That matters when a short window (the 5-hour session) resets while a long one (the weekly limit) is still saturated: releasing the account early would select it, immediately exhaust it again, and flap. That recorded reset time is an upper bound, not a lease: the monitor keeps polling the account and releases it as soon as a poll shows it back under the threshold.
 
 With `--prefer-primary=false` the monitor instead cycles forward, staying on each account until that account is exhausted and only then advancing.
 
@@ -96,6 +131,7 @@ ccswitch list                      # list all accounts with live usage
 ccswitch status                    # show the active account and its usage
 ccswitch use <email>               # manually switch accounts
 ccswitch rotate                    # rotate to the next healthy account
+ccswitch threshold 100             # set the rotation threshold, applied immediately
 ccswitch monitor                   # run the daemon in the foreground
 ccswitch monitor --ensure-daemon   # start the daemon in the background if not running
 ```
@@ -104,7 +140,7 @@ ccswitch monitor --ensure-daemon   # start the daemon in the background if not r
 
 | Flag             | Default                               | Description                                            |
 |------------------|---------------------------------------|--------------------------------------------------------|
-| `--threshold`    | `90`                                  | Utilization percent (0-100) that triggers rotation.    |
+| `--threshold`    | `99`                                  | Utilization percent (0-100) that triggers rotation, for this invocation only. The value stored by `ccswitch threshold` applies when this is not passed. |
 | `--interval`     | `5m`                                  | Monitor poll interval.                                 |
 | `--prefer-primary` | `true`                              | Always run on the highest-priority account with capacity, returning to the primary as soon as its limits reset. |
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
