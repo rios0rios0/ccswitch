@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'made an exhaustion marker follow what the latest poll saw rather than persisting until its recorded reset time. An account whose limits reset early is released as soon as a poll shows it under the threshold, which is also what lets a threshold change take effect against fresh numbers'
-time: '2026-09-01T17:37:01.433004605Z'

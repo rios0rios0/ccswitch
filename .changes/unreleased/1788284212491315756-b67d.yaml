@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'made the monitor poll every enrolled account rather than only the active one, so a backup''s refresh token stays alive between rotations. Refresh tokens are rotated on every use and expire in weeks, so an account nobody touched went stale in the store and rotating to it installed a token the server had already forgotten'
-time: '2026-09-01T17:36:52.491217262Z'

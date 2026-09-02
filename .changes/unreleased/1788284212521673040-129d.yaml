@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'made writing the credentials file a read-modify-write, so `mcpOAuth` and `designOauth` survive a rotation. Marshalling only `claudeAiOauth` over the file signed the user out of every authenticated MCP server on every switch -- the macOS keychain adapter already merged, the file adapter did not'
-time: '2026-09-01T17:36:52.521529297Z'

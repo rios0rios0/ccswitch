@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'made the utilization percentage the sole test for exhaustion. The server''s `critical` severity no longer triggers rotation on its own: it is a display band rather than a ceiling -- reported from around 95% with `locked_reason` still null, i.e. while the account is perfectly usable -- so honouring it capped every threshold at the point the warning fires and made a threshold of 99 behave exactly like 90'
-time: '2026-09-01T17:37:01.425912143Z'
