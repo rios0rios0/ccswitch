@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'stopped capturing the blank credentials Claude Code writes when a refresh answers `invalid_grant`. It empties `claudeAiOauth` in place rather than removing it, and capturing that replaced the account''s last good tokens with the marker saying they were gone, then flagged the account long-lived so it was never polled or selected again'
-time: '2026-09-01T17:36:52.505936698Z'

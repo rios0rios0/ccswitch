@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'rejected a NaN rotation threshold. `strconv.ParseFloat` accepts the literal `NaN` and every comparison against it is false, so it passed the range check and, once stored, made `Percent >= threshold` false for every limit -- silently disabling rotation altogether'
-time: '2026-09-01T18:07:53.887952817Z'

@@ -22,6 +22,31 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-02
+
+### Added
+
+- added `ccswitch threshold [percent]`, which shows the rotation threshold or sets it. The value is persisted in the store, so a running monitor daemon picks it up on its next tick without being restarted, and it is applied at once: every account is repolled, the exhaustion markers the old threshold produced are rewritten, and the highest-priority account below the new threshold becomes active. `--reset` goes back to the built-in default
+
+### Changed
+
+- changed the Go version to `1.27.1` and updated all module dependencies
+- made an exhaustion marker follow what the latest poll saw rather than persisting until its recorded reset time. An account whose limits reset early is released as soon as a poll shows it under the threshold, which is also what lets a threshold change take effect against fresh numbers
+- made the utilization percentage the sole test for exhaustion. The server's `critical` severity no longer triggers rotation on its own: it is a display band rather than a ceiling -- reported from around 95% with `locked_reason` still null, i.e. while the account is perfectly usable -- so honouring it capped every threshold at the point the warning fires and made a threshold of 99 behave exactly like 90
+- raised the default rotation threshold from 90% to 99%
+- stopped baking `--threshold` into the detached daemon's command line unless it was named explicitly, so the daemon follows the stored threshold instead of treating its own startup value as an override
+
+### Fixed
+
+- advanced an account's poll timestamp on a failed attempt, not only a successful one. It is the backup poll cadence's sole input, so an account whose polls were failing was retried on every tick instead of every cadence -- and an endpoint answering `429` is exactly the condition the cadence exists to survive
+- made `OAuthCredentials.Degraded` test the scope invariant it guards -- that the scopes name `user:inference` -- rather than the weaker "carries no scopes at all". A set narrowed to some other scope is just as fatal, is reached the same way, and was previously sticky: the repair path could not see it, and each refresh asked for the narrowed set again. A refresh now widens a degraded set back to Claude Code's full scope list, while a narrowing the endpoint explicitly reports is still recorded honestly and surfaced in the daemon log
+- made the monitor poll every enrolled account rather than only the active one, so a backup's refresh token stays alive between rotations. Refresh tokens are rotated on every use and expire in weeks, so an account nobody touched went stale in the store and rotating to it installed a token the server had already forgotten
+- made the monitor retry a switch that an earlier tick could only record. A rotation deferred because a `claude` session was running was never written again, so it landed only if the shell wrapper called `ensure`, and never at all without it
+- made writing the credentials file a read-modify-write, so `mcpOAuth` and `designOauth` survive a rotation. Marshalling only `claudeAiOauth` over the file signed the user out of every authenticated MCP server on every switch -- the macOS keychain adapter already merged, the file adapter did not
+- rejected a NaN rotation threshold. `strconv.ParseFloat` accepts the literal `NaN` and every comparison against it is false, so it passed the range check and, once stored, made `Percent >= threshold` false for every limit -- silently disabling rotation altogether
+- stopped capturing the blank credentials Claude Code writes when a refresh answers `invalid_grant`. It empties `claudeAiOauth` in place rather than removing it, and capturing that replaced the account's last good tokens with the marker saying they were gone, then flagged the account long-lived so it was never polled or selected again
+- stopped rebuilding credentials from the token-refresh response alone. The endpoint answers a refresh with the new token pair and little else, so the previous code wrote back a credential document with no `scopes`, no `subscriptionType` and no refresh-token expiry -- and Claude Code refuses to persist its own later refresh of a set whose scopes do not name `user:inference`, classifying it as not-claude.ai. The pair on disk then went stale, the refresh after that answered `invalid_grant`, and Claude Code blanked the credentials: the logout. A refresh now names the scopes it wants, reads `scope` and `refresh_token_expires_in` back, and merges onto the credentials it replaces. An account an earlier version already stripped is repaired on its next poll
+
 ## [0.6.0] - 2026-08-28
 
 ### Added
