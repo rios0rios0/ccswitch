@@ -57,6 +57,16 @@ else branches on the OS; keep it that way.
   the logout. `TokensRepository.Refresh` therefore takes the whole `OAuthCredentials` — it has to
   name the scopes it wants in the request — and merges through
   `OAuthCredentials.WithRefreshed`, the same way Claude Code's own merge does.
+- **A refresh must be published back to the credential store.** ccswitch and Claude Code share one
+  refresh token, and the server rotates it on every refresh — whoever refreshes second with the old
+  token gets `invalid_grant` and is logged out. Keeping a refreshed pair only in the ccswitch store
+  therefore logs Claude Code out, and because a refresh only fires once the access token is spent it
+  bites idle sessions first. `publishRefreshed` writes the new pair back only while the store still
+  holds exactly the pair the refresh consumed; that guard is what stops it clobbering a different
+  account's credentials, and it is why publishing the same account's newer tokens is safe even while
+  a session runs (unlike an account switch, which the running-session guard in `switchTo` blocks).
+  Every command that polls usage — `monitor`, `list`, `status` — can spend the refresh token, so
+  every one of them publishes.
 - **Every enrolled account is polled, not only the active one.** Refresh tokens are rotated on every
   use and expire in weeks, so a backup nobody touches between rotations goes stale in the store and
   installing it hands Claude Code a token the server has forgotten. Backups poll on
