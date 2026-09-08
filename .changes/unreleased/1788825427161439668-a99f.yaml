@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'refreshed `CLAUDE.md` to document the credential-store publish-back invariant enforced by `publishRefreshed`'
-time: '2026-09-07T23:57:07.161258261Z'
