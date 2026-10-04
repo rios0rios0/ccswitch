@@ -29,8 +29,9 @@ Clean Architecture; the domain layer must never import infrastructure.
 
 - `internal/domain/entities` — pure types (`Account`, `Store`, `Settings`, `Usage`, `Limit`,
   `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`).
-- `internal/domain/commands` — one command per CLI verb (`enroll`, `list`, `status`, `use`,
-  `rotate`, `ensure`, `threshold`, `monitor`), each constructed from repository ports.
+- `internal/domain/commands` — one command per CLI verb (`enroll`, `list`, `show`, `update`,
+  `remove`, `reorder`, `status`, `use`, `rotate`, `ensure`, `threshold`, `monitor`), each constructed
+  from repository ports.
 - `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`).
 - `internal/infrastructure/repositories` — adapters: JSON store, the credentials swappers
   (`FileCredentialsRepository` for `.credentials.json`, `KeychainCredentialsRepository` for the macOS
@@ -122,7 +123,13 @@ else branches on the OS; keep it that way.
 - **Long-lived tokens cannot be polled.** Tokens from `claude setup-token` lack the `user:profile`
   scope that `GET /api/oauth/usage` requires (403), so such accounts are flagged `LongLived` and
   gated by `Account.SupportsUsagePolling`. Never poll them or select them automatically — they are a
-  manual fallback (`ccswitch use <email>`).
+  manual fallback (`ccswitch use <email>`). That includes handing over from a removed or missing
+  current account: go through `Store.Successor`, never "the first account in order", which may be one.
+- **Priority is `Account.Order`, and every change keeps it contiguous from 0.** `Store.Move`,
+  `Store.Reorder` and `Store.Remove` renumber the order in place — pointers into `Store.Accounts` keep
+  naming the same account — while the CLI counts positions from 1 for the primary (`Store.Position`,
+  `entities.ParsePriority`). Reordering touches no credentials: the monitor reloads the store every
+  tick and `selectTarget` compares `Order` values, which is also why they must never tie.
 
 ## Conventions
 

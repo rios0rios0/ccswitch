@@ -9,6 +9,15 @@ const (
 	SeverityCritical = "critical"
 )
 
+// Limit kinds reported by the Claude usage endpoint. The first two are the
+// rolling 5-hour and 7-day allowances that Usage.FiveHour and Usage.SevenDay also
+// report; the scoped kind is a weekly limit on one model family.
+const (
+	LimitKindSession      = "session"
+	LimitKindWeeklyAll    = "weekly_all"
+	LimitKindWeeklyScoped = "weekly_scoped"
+)
+
 // Window describes utilization of a single rolling usage window, expressed as a
 // percentage in the range 0-100.
 type Window struct {
@@ -32,6 +41,50 @@ type Usage struct {
 	SevenDay   Window  `json:"sevenDay"`
 	Limits     []Limit `json:"limits"`
 	ExtraUsage bool    `json:"extraUsage"`
+}
+
+// Reading is one utilization figure worth showing for an account, a rolling
+// window or another limit, together with the time it resets.
+type Reading struct {
+	Kind     string
+	Percent  float64
+	ResetsAt time.Time
+}
+
+// Readings returns every utilization figure the endpoint reported: the 5-hour and
+// 7-day windows first, then each other limit in the order it was reported.
+//
+// The windows and the `session` and `weekly_all` limits describe the same two
+// allowances, so those limits are folded into the windows instead of being listed
+// twice, and a window the endpoint left empty is filled from its limit. Every
+// other limit (a weekly limit scoped to one model family, say) is listed on its
+// own whether or not it is active. It is often the one that exhausts an account,
+// and what a reader wants from it is when it resets.
+func (u Usage) Readings() []Reading {
+	readings := []Reading{
+		u.windowReading(LimitKindSession, u.FiveHour),
+		u.windowReading(LimitKindWeeklyAll, u.SevenDay),
+	}
+	for _, limit := range u.Limits {
+		if limit.Kind == LimitKindSession || limit.Kind == LimitKindWeeklyAll {
+			continue
+		}
+		readings = append(readings, Reading{Kind: limit.Kind, Percent: limit.Percent, ResetsAt: limit.ResetsAt})
+	}
+	return readings
+}
+
+// windowReading reports one rolling window, falling back to the limit of the same
+// kind when the endpoint did not fill the window in.
+func (u Usage) windowReading(kind string, window Window) Reading {
+	if window.ResetsAt.IsZero() && window.Utilization == 0 {
+		for _, limit := range u.Limits {
+			if limit.Kind == kind {
+				return Reading{Kind: kind, Percent: limit.Percent, ResetsAt: limit.ResetsAt}
+			}
+		}
+	}
+	return Reading{Kind: kind, Percent: window.Utilization, ResetsAt: window.ResetsAt}
 }
 
 // Exhausted reports whether any active limit is spent at the given threshold.

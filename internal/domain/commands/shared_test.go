@@ -11,7 +11,16 @@ const (
 	thresholdPct = 90.0
 	fullPct      = 100.0
 	lowPct       = 20.0
+	sessionPct   = 56.0
+	weeklyPct    = 93.0
 	longRecovery = 72 * time.Hour
+	// The reset offsets below sit well clear of the unit boundary below them, so
+	// the countdown a test expects holds however long the test takes to get there.
+	sessionResetIn    = 2*time.Hour + 13*time.Minute + 30*time.Second
+	weeklyResetIn     = 4*24*time.Hour + 2*time.Hour + 30*time.Minute
+	recoveryIn        = 31*time.Minute + 30*time.Second
+	wholeHoursResetIn = 4*time.Hour + 30*time.Second
+	imminentResetIn   = 40 * time.Second
 	// farFuture is an expiry no test run will reach, so a token carrying it is
 	// refreshed only when something other than its age forces it.
 	farFuture = int64(1) << 62
@@ -67,6 +76,36 @@ func livePairStore() *entities.Store {
 		store.Accounts[i].Credentials.ExpiresAt = farFuture
 	}
 	return store
+}
+
+// threeAccountStore returns livePairStore with a third live account "c" at the
+// end of the rotation order.
+func threeAccountStore() *entities.Store {
+	store := livePairStore()
+	third := creds("c", "rc")
+	third.ExpiresAt = farFuture
+	store.Accounts = append(store.Accounts, entities.Account{
+		Email:       "c@example.com",
+		Order:       2,
+		Credentials: third,
+	})
+	return store
+}
+
+// emailsInOrder returns the store's accounts in rotation order.
+func emailsInOrder(store *entities.Store) []string {
+	ordered := store.Ordered()
+	emails := make([]string, 0, len(ordered))
+	for i := range ordered {
+		emails = append(emails, ordered[i].Email)
+	}
+	return emails
+}
+
+// momentIn renders a moment the way the commands print it, so a test does not
+// depend on the time zone it runs in.
+func momentIn(moment time.Time) string {
+	return moment.Local().Format("Mon Jan 2 15:04")
 }
 
 // expiredPrimaryStore returns a store in which only the primary's access token is

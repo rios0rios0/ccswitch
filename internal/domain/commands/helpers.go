@@ -16,9 +16,18 @@ import (
 )
 
 const (
-	envAPIKey       = "ANTHROPIC_API_KEY"    //nolint:gosec // env var name, not a secret
-	envAuthToken    = "ANTHROPIC_AUTH_TOKEN" //nolint:gosec // env var name, not a secret
-	resetTimeLayout = "Mon 15:04"
+	envAPIKey    = "ANTHROPIC_API_KEY"    //nolint:gosec // env var name, not a secret
+	envAuthToken = "ANTHROPIC_AUTH_TOKEN" //nolint:gosec // env var name, not a secret
+	// momentLayout spells out the date as well as the weekday: a weekly limit can
+	// reset a full week out, on the weekday it is today.
+	momentLayout = "Mon Jan 2 15:04"
+	hoursPerDay  = 24
+	// readingIndent lines a reading up under the email of the account it belongs
+	// to, past the "* 1. " marker and position that start the account's line.
+	readingIndent = "     "
+	// readingLabelWidth fits the longest label readingLabel produces.
+	readingLabelWidth = 12
+	stateOK           = "ok"
 )
 
 // pollUsage fetches usage for the given credentials, refreshing the access token
@@ -154,6 +163,13 @@ func identityKnown(identity *entities.AccountIdentity) bool {
 	return identity != nil && identity.Known()
 }
 
+// notEnrolled reports an email that names no enrolled account, pointing at the
+// command that lists the ones that are.
+func notEnrolled(email string) error {
+	return fmt.Errorf("%w: %s; run `ccswitch list` to see enrolled accounts",
+		entities.ErrAccountNotEnrolled, email)
+}
+
 // accountEmail returns the email address from an identity, or empty when unknown.
 func accountEmail(identity *entities.AccountIdentity) string {
 	if identity == nil {
@@ -162,15 +178,40 @@ func accountEmail(identity *entities.AccountIdentity) string {
 	return identity.EmailAddress
 }
 
+// captureRefreshed writes credentials a poll refreshed back into the stored
+// account and publishes them to the credentials store, reporting whether it did.
+//
+// The account is looked up on the store rather than taken from the caller,
+// because Store.Ordered hands out copies. Dropping the refreshed pair instead would
+// pin the store to a refresh token the server invalidated the instant the refresh
+// rotated it, leaving the account unreadable until it is enrolled again.
+func captureRefreshed(
+	credentials repositories.CredentialsRepository,
+	store *entities.Store,
+	email string,
+	previous, creds entities.OAuthCredentials,
+) bool {
+	if creds.AccessToken == previous.AccessToken && creds.RefreshToken == previous.RefreshToken {
+		return false
+	}
+	stored := store.FindAccount(email)
+	if stored == nil {
+		return false
+	}
+	stored.Credentials = creds
+	publishRefreshed(credentials, previous, stored)
+	return true
+}
+
 // printUsage renders a compact usage summary to the writer.
-func printUsage(writer io.Writer, usage *entities.Usage, threshold float64) {
-	fmt.Fprintf(writer, "  5-hour:  %3.0f%% (resets %s)\n",
-		usage.FiveHour.Utilization, formatReset(usage.FiveHour.ResetsAt))
-	fmt.Fprintf(writer, "  7-day:   %3.0f%% (resets %s)\n",
-		usage.SevenDay.Utilization, formatReset(usage.SevenDay.ResetsAt))
+func printUsage(writer io.Writer, usage *entities.Usage, threshold float64, now time.Time) {
+	fmt.Fprintf(writer, "  5-hour:  %3.0f%%, resets %s\n",
+		usage.FiveHour.Utilization, formatMoment(now, usage.FiveHour.ResetsAt))
+	fmt.Fprintf(writer, "  7-day:   %3.0f%%, resets %s\n",
+		usage.SevenDay.Utilization, formatMoment(now, usage.SevenDay.ResetsAt))
 	if binding, ok := usage.BindingLimit(); ok {
-		fmt.Fprintf(writer, "  binding: %s %.0f%% (%s, resets %s)\n",
-			binding.Kind, binding.Percent, binding.Severity, formatReset(binding.ResetsAt))
+		fmt.Fprintf(writer, "  binding: %s %.0f%% (%s), resets %s\n",
+			binding.Kind, binding.Percent, binding.Severity, formatMoment(now, binding.ResetsAt))
 	}
 	if usage.Exhausted(threshold) {
 		fmt.Fprintln(writer, "  status:  EXHAUSTED")
@@ -179,11 +220,113 @@ func printUsage(writer io.Writer, usage *entities.Usage, threshold float64) {
 	}
 }
 
-// formatReset formats a reset timestamp in local time, or "unknown" for the zero
-// time.
-func formatReset(reset time.Time) string {
-	if reset.IsZero() {
+// printReadings writes one line per utilization figure in the usage: its label,
+// its percentage, and when it resets. A figure the endpoint reported no reset time
+// for is printed without one, rather than with a reset reading "unknown".
+func printReadings(writer io.Writer, usage *entities.Usage, now time.Time) {
+	for _, reading := range usage.Readings() {
+		line := fmt.Sprintf("%s%-*s %4.0f%%",
+			readingIndent, readingLabelWidth, readingLabel(reading.Kind), reading.Percent)
+		if !reading.ResetsAt.IsZero() {
+			line += "  " + describeReset(now, reading.ResetsAt)
+		}
+		fmt.Fprintln(writer, line)
+	}
+}
+
+// readingLabel names a reading the way Claude Code's own usage screen describes
+// it, falling back to the raw kind for a limit this version does not know.
+func readingLabel(kind string) string {
+	labels := map[string]string{
+		entities.LimitKindSession:      "5-hour",
+		entities.LimitKindWeeklyAll:    "7-day",
+		entities.LimitKindWeeklyScoped: "7-day scoped",
+	}
+	if label, ok := labels[kind]; ok {
+		return label
+	}
+	return kind
+}
+
+// usageState sums up what a live reading says about the account: "ok", or
+// exhausted together with when it is available again, which is when every limit
+// over the threshold has reset (see Usage.RecoversAt).
+func usageState(usage *entities.Usage, threshold float64, now time.Time) string {
+	if !usage.Exhausted(threshold) {
+		return stateOK
+	}
+	return exhaustedState(now, usage.RecoversAt(threshold))
+}
+
+// markerState sums up the account from its exhaustion marker, for when no live
+// reading is at hand.
+func markerState(store *entities.Store, email string, now time.Time) string {
+	if !store.Rotation.IsExhausted(email, now) {
+		return stateOK
+	}
+	return exhaustedState(now, store.Rotation.ExhaustedUntil[email])
+}
+
+// exhaustedState phrases an exhausted account and, when known, when it is
+// available again.
+func exhaustedState(now, recovers time.Time) string {
+	if recovers.IsZero() {
+		return "exhausted"
+	}
+	return "exhausted, available again " + formatMoment(now, recovers)
+}
+
+// describeReset phrases when a limit resets: "resets in 2h 13m (Tue Sep 29
+// 17:47)", or "reset 5m ago (...)" for a moment already past, which only a stale
+// reading shows.
+func describeReset(now, reset time.Time) string {
+	if reset.After(now) {
+		return "resets " + formatMoment(now, reset)
+	}
+	return "reset " + formatMoment(now, reset)
+}
+
+// formatMoment renders a moment relative to now and in local time: "in 2h 13m
+// (Tue Sep 29 17:47)" ahead of now, "5m ago (Tue Sep 29 17:29)" behind it, or
+// "unknown" for the zero time.
+func formatMoment(now, moment time.Time) string {
+	if moment.IsZero() {
 		return "unknown"
 	}
-	return reset.Local().Format(resetTimeLayout)
+	when := moment.Local().Format(momentLayout)
+	if moment.After(now) {
+		return fmt.Sprintf("in %s (%s)", formatDuration(moment.Sub(now)), when)
+	}
+	return fmt.Sprintf("%s ago (%s)", formatDuration(now.Sub(moment)), when)
+}
+
+// formatDuration renders a duration at the precision a countdown needs: days and
+// hours, hours and minutes, or minutes alone, leaving out a smaller unit that
+// reads zero. Whatever falls below the smallest unit shown is dropped, the way a
+// countdown clock reads.
+func formatDuration(duration time.Duration) string {
+	day := hoursPerDay * time.Hour
+	days := int64(duration / day)
+	hours := int64(duration % day / time.Hour)
+	minutes := int64(duration % time.Hour / time.Minute)
+
+	switch {
+	case days > 0:
+		return joinUnits(days, "d", hours, "h")
+	case hours > 0:
+		return joinUnits(hours, "h", minutes, "m")
+	case minutes > 0:
+		return fmt.Sprintf("%dm", minutes)
+	default:
+		return "<1m"
+	}
+}
+
+// joinUnits renders a count in a larger unit followed by one in a smaller unit,
+// leaving the smaller one out when it is zero: "2d 4h", but "2d".
+func joinUnits(major int64, majorUnit string, minor int64, minorUnit string) string {
+	if minor == 0 {
+		return fmt.Sprintf("%d%s", major, majorUnit)
+	}
+	return fmt.Sprintf("%d%s %d%s", major, majorUnit, minor, minorUnit)
 }

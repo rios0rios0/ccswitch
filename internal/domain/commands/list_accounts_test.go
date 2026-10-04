@@ -1,9 +1,12 @@
 package commands_test
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -198,5 +201,130 @@ func TestListAccountsRefreshesRejectedToken(t *testing.T) {
 		account := accounts.Store.FindAccount("a@example.com")
 		require.NotNil(t, account)
 		assert.Equal(t, "fresh", account.Credentials.AccessToken)
+	})
+}
+
+func TestListAccountsPrintsWhenLimitsReset(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should number accounts from 1 and print when each window resets", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		sessionReset := now.Add(sessionResetIn)
+		weeklyReset := now.Add(weeklyResetIn)
+		usage := &doubles.StubUsageRepository{Usage: &entities.Usage{
+			FiveHour: entities.Window{Utilization: sessionPct, ResetsAt: sessionReset},
+			SevenDay: entities.Window{Utilization: weeklyPct, ResetsAt: weeklyReset},
+		}}
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		var out bytes.Buffer
+
+		// when
+		err := commands.NewListAccountsCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{}, usage, &doubles.StubTokensRepository{},
+		).WithOutput(&out).Execute()
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "* 1. a@example.com [ok]\n")
+		assert.Contains(t, out.String(), "  2. b@example.com [ok]\n")
+		assert.Regexp(t, `5-hour\s+56%\s+resets in 2h 13m \(`+regexp.QuoteMeta(momentIn(sessionReset))+`\)`,
+			out.String())
+		assert.Regexp(t, `7-day\s+93%\s+resets in 4d 2h \(`+regexp.QuoteMeta(momentIn(weeklyReset))+`\)`,
+			out.String())
+	})
+
+	t.Run("should print when an exhausted account is available again", func(t *testing.T) {
+		t.Parallel()
+		// given: a scoped weekly limit, which neither window shows, exhausts "a"
+		recovers := time.Now().Add(recoveryIn)
+		usage := perAccountUsage(map[string]*entities.Usage{
+			"a": {Limits: []entities.Limit{{
+				Kind:     entities.LimitKindWeeklyScoped,
+				Percent:  fullPct,
+				IsActive: true,
+				ResetsAt: recovers,
+			}}},
+			"b": healthyUsage(),
+		})
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		var out bytes.Buffer
+
+		// when
+		err := commands.NewListAccountsCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{}, usage, &doubles.StubTokensRepository{},
+		).WithOutput(&out).Execute()
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out.String(),
+			"* 1. a@example.com [exhausted, available again in 31m ("+momentIn(recovers)+")]\n")
+		assert.Regexp(t, `7-day scoped\s+100%\s+resets in 31m`, out.String())
+	})
+
+	t.Run("should fall back to the last known reading when the poll fails", func(t *testing.T) {
+		t.Parallel()
+		// given: the endpoint refuses "b", whose last reading the monitor recorded
+		weeklyReset := time.Now().Add(weeklyResetIn)
+		store := livePairStore()
+		store.Accounts[1].LastUsage = &entities.Usage{
+			SevenDay: entities.Window{Utilization: weeklyPct, ResetsAt: weeklyReset},
+		}
+		usage := &doubles.StubUsageRepository{
+			ByToken:    map[string]*entities.Usage{"a": healthyUsage()},
+			ErrByToken: map[string]error{"b": errUsageUnreachable},
+		}
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		var out bytes.Buffer
+
+		// when
+		err := commands.NewListAccountsCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{}, usage, &doubles.StubTokensRepository{},
+		).WithOutput(&out).Execute()
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "usage unavailable; last known reading:")
+		assert.Regexp(t, `7-day\s+93%\s+resets in 4d 2h`, out.String())
+	})
+
+	t.Run("should leave a zero unit out of a countdown and floor it at under a minute", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		usage := &doubles.StubUsageRepository{Usage: &entities.Usage{
+			FiveHour: entities.Window{Utilization: sessionPct, ResetsAt: now.Add(wholeHoursResetIn)},
+			SevenDay: entities.Window{Utilization: weeklyPct, ResetsAt: now.Add(imminentResetIn)},
+		}}
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		var out bytes.Buffer
+
+		// when
+		err := commands.NewListAccountsCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{}, usage, &doubles.StubTokensRepository{},
+		).WithOutput(&out).Execute()
+
+		// then
+		require.NoError(t, err)
+		assert.Regexp(t, `5-hour\s+56%\s+resets in 4h \(`, out.String())
+		assert.Regexp(t, `7-day\s+93%\s+resets in <1m \(`, out.String())
+	})
+
+	t.Run("should mark an account enrolled from a long-lived token as manual only", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: longLivedOnlyStore()}
+		var out bytes.Buffer
+
+		// when
+		err := commands.NewListAccountsCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{},
+			&doubles.StubUsageRepository{}, &doubles.StubTokensRepository{},
+		).WithOutput(&out).Execute()
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "* 1. long@example.com [manual only]")
 	})
 }

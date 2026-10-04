@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'made the monitor replace a current account that is no longer enrolled the way `ccswitch remove` does -- with the highest-priority account that has capacity -- instead of with the first account in the rotation order, which could be a long-lived one that must only ever be selected by hand'
+time: '2026-09-29T22:42:38.597804303Z'
