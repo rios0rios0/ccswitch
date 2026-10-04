@@ -1,0 +1,3 @@
+kind: 'Added'
+body: 'added `ccswitch remove <email>...` to remove accounts and their stored tokens from the store, removing none of them unless every named account is enrolled. Removing the active account hands over to the highest-priority remaining account with capacity and installs it at once, or on the next launch while a `claude` session is running'
+time: '2026-09-29T22:42:38.53019899Z'

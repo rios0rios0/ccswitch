@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 )
@@ -208,5 +209,52 @@ func TestUsageExhaustedIgnoresTheServerSeverity(t *testing.T) {
 
 		// then
 		assert.True(t, recovers.IsZero())
+	})
+}
+
+func TestUsageReadings(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should list both windows first and then every other limit", func(t *testing.T) {
+		t.Parallel()
+		// given: the shape the endpoint returns, where the session limit repeats the
+		// 5-hour window and a scoped weekly limit reports alongside the windows
+		sessionReset := time.Now().Truncate(time.Second)
+		weeklyReset := sessionReset.Add(longWeeklyReset)
+		usage := entities.Usage{
+			FiveHour: entities.Window{Utilization: sessionPct, ResetsAt: sessionReset},
+			SevenDay: entities.Window{Utilization: weeklyPct, ResetsAt: weeklyReset},
+			Limits: []entities.Limit{
+				{Kind: entities.LimitKindSession, Percent: sessionPct, ResetsAt: sessionReset},
+				{Kind: entities.LimitKindWeeklyScoped, Percent: scopedPct, IsActive: true, ResetsAt: weeklyReset},
+			},
+		}
+
+		// when
+		readings := usage.Readings()
+
+		// then
+		assert.Equal(t, []entities.Reading{
+			{Kind: entities.LimitKindSession, Percent: sessionPct, ResetsAt: sessionReset},
+			{Kind: entities.LimitKindWeeklyAll, Percent: weeklyPct, ResetsAt: weeklyReset},
+			{Kind: entities.LimitKindWeeklyScoped, Percent: scopedPct, ResetsAt: weeklyReset},
+		}, readings)
+	})
+
+	t.Run("should fill a window the endpoint left empty from its limit", func(t *testing.T) {
+		t.Parallel()
+		// given
+		reset := time.Now().Truncate(time.Second)
+		usage := entities.Usage{Limits: []entities.Limit{
+			{Kind: entities.LimitKindWeeklyAll, Percent: weeklyPct, IsActive: true, ResetsAt: reset},
+		}}
+
+		// when
+		readings := usage.Readings()
+
+		// then
+		require.Len(t, readings, 2, "the weekly_all limit is the 7-day window, not a third reading")
+		assert.Equal(t, entities.Reading{Kind: entities.LimitKindWeeklyAll, Percent: weeklyPct, ResetsAt: reset},
+			readings[1])
 	})
 }

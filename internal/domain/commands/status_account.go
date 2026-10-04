@@ -67,8 +67,9 @@ func (c *StatusCommand) Execute() error {
 		return nil
 	}
 
+	now := c.now()
 	previous := current.Credentials
-	usage, creds, pollErr := pollUsage(c.usage, c.tokens, &current.Credentials, c.now().UnixMilli())
+	usage, creds, pollErr := pollUsage(c.usage, c.tokens, &current.Credentials, now.UnixMilli())
 	// Persist before handling the poll error: a refresh that already succeeded
 	// rotated the token server-side and cannot be undone, so discarding it would
 	// strand both the store and Claude Code on a token the server has invalidated.
@@ -81,7 +82,7 @@ func (c *StatusCommand) Execute() error {
 		return nil
 	}
 
-	printUsage(os.Stdout, usage, c.config.ResolveThreshold(store.Settings))
+	printUsage(os.Stdout, usage, c.config.ResolveThreshold(store.Settings), now)
 	return nil
 }
 

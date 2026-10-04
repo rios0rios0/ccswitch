@@ -106,7 +106,7 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 	store.Rotation.ClearExpired(now)
 	c.syncActiveCredentials(store)
 
-	current := c.resolveCurrent(store)
+	current := c.resolveCurrent(store, now)
 	if current == nil {
 		return c.accounts.Save(store)
 	}
@@ -117,17 +117,21 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 	return c.accounts.Save(store)
 }
 
-// resolveCurrent returns the current account, defaulting to the first ordered
-// account when the current pointer is unset or dangling.
-func (c *MonitorCommand) resolveCurrent(store *entities.Store) *entities.Account {
+// resolveCurrent returns the current account. When the current pointer is unset
+// or names an account that is no longer enrolled, it picks the one that takes
+// over the same way `ccswitch remove` does (see Store.Successor), and returns nil
+// when only long-lived accounts are left. Defaulting to the first account in the
+// order instead would install a long-lived token automatically whenever one heads
+// the order, which only a deliberate `ccswitch use` may do.
+func (c *MonitorCommand) resolveCurrent(store *entities.Store, now time.Time) *entities.Account {
 	if account := store.FindAccount(store.Rotation.CurrentEmail); account != nil {
 		return account
 	}
-	ordered := store.Ordered()
-	if len(ordered) == 0 {
+	successor, ok := store.Successor(now)
+	if !ok {
 		return nil
 	}
-	store.Rotation.CurrentEmail = ordered[0].Email
+	store.Rotation.CurrentEmail = successor.Email
 	return store.FindAccount(store.Rotation.CurrentEmail)
 }
 
@@ -237,7 +241,7 @@ func (c *MonitorCommand) reconcile(
 	if !ok {
 		if exhausted {
 			logger.Warnf("[ccswitch] %s exhausted and no account has capacity; recovers %s",
-				current.Email, formatReset(store.Rotation.ExhaustedUntil[current.Email]))
+				current.Email, formatMoment(now, store.Rotation.ExhaustedUntil[current.Email]))
 		}
 		return
 	}

@@ -14,8 +14,9 @@ Clean Architecture with a strict domain / infrastructure split:
 - `internal/domain/entities` — pure model: `Account`, `Store`, `Settings`, `Usage`, `Limit`,
   `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`. No infrastructure imports.
 - `internal/domain/commands` — application logic: `EnrollAccountCommand`, `ListAccountsCommand`,
-  `StatusCommand`, `UseAccountCommand`, `RotateAccountCommand`, `EnsureActiveCommand`,
-  `SetThresholdCommand`, `MonitorCommand`. Each takes ports and exposes `Execute` (or `Run`/`Tick`
+  `GetAccountCommand` (`show`), `UpdateAccountCommand`, `DeleteAccountsCommand` (`remove`),
+  `ReorderAccountsCommand`, `StatusCommand`, `UseAccountCommand`, `RotateAccountCommand`,
+  `EnsureActiveCommand`, `SetThresholdCommand`, `MonitorCommand`. Each takes ports and exposes `Execute` (or `Run`/`Tick`
   for the daemon).
 - `internal/domain/repositories` — ports: `AccountsRepository`, `CredentialsRepository`,
   `UsageRepository`, `TokensRepository`, `SessionsRepository`.
@@ -88,6 +89,12 @@ Clean Architecture with a strict domain / infrastructure split:
   `user:profile` scope that `/api/oauth/usage` requires, so they return 403. Such accounts are
   flagged `LongLived` (and detected by an absent refresh token, which also covers stores written
   before the flag existed); `Account.SupportsUsagePolling` gates polling and automatic selection.
+- **Priority is `Account.Order`, and every change keeps it contiguous from 0.** `Store.Move`,
+  `Store.Reorder` and `Store.Remove` renumber in place, so pointers into `Store.Accounts` stay valid;
+  the CLI counts positions from 1 (`Store.Position`, `entities.ParsePriority`). Reordering touches no
+  credentials — the monitor reloads the store every tick — and `selectTarget` compares `Order` values,
+  so they must never tie. A removed or missing current account is replaced through `Store.Successor`,
+  which never picks a long-lived account.
 - **A refresh must be published back to the credential store.** ccswitch and Claude Code share one
   refresh token, and the server rotates it on every refresh — whoever refreshes second with the old
   token gets `invalid_grant`. Keeping a refreshed pair only in the ccswitch store therefore logs

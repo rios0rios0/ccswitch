@@ -59,6 +59,10 @@ func NewRootCommand(version string) *cobra.Command {
 	root.AddCommand(
 		newEnrollCommand(cfg),
 		newListCommand(cfg),
+		newShowCommand(cfg),
+		newUpdateCommand(cfg),
+		newRemoveCommand(cfg),
+		newReorderCommand(cfg),
 		newStatusCommand(cfg),
 		newUseCommand(cfg),
 		newRotateCommand(cfg),

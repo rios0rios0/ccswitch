@@ -26,7 +26,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(accounts, credentials)
 
 		// when
-		err := command.Execute("", "")
+		err := command.Execute("", "", nil)
 
 		// then
 		require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(accounts, credentials)
 
 		// when
-		err := command.Execute("", "")
+		err := command.Execute("", "", nil)
 
 		// then
 		require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(&doubles.InMemoryAccountsRepository{}, credentials)
 
 		// when
-		err := command.Execute("", "")
+		err := command.Execute("", "", nil)
 
 		// then
 		require.Error(t, err)
@@ -82,7 +82,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(&doubles.InMemoryAccountsRepository{}, credentials)
 
 		// when
-		err := command.Execute("", "")
+		err := command.Execute("", "", nil)
 
 		// then
 		require.Error(t, err)
@@ -95,7 +95,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(&doubles.InMemoryAccountsRepository{}, credentials)
 
 		// when
-		err := command.Execute("", "")
+		err := command.Execute("", "", nil)
 
 		// then
 		require.Error(t, err)
@@ -110,7 +110,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		before := time.Now()
 
 		// when
-		err := command.Execute("setup-token-value", "a@example.com")
+		err := command.Execute("setup-token-value", "a@example.com", nil)
 
 		// then
 		require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 		command := commands.NewEnrollAccountCommand(accounts, credentials)
 
 		// when
-		err := command.Execute("", "")
+		err := command.Execute("", "", nil)
 
 		// then
 		require.NoError(t, err)
@@ -150,9 +150,73 @@ func TestEnrollAccountCommandExecute(t *testing.T) {
 			&doubles.InMemoryAccountsRepository{}, &doubles.StubCredentialsRepository{})
 
 		// when
-		err := command.Execute("setup-token-value", "")
+		err := command.Execute("setup-token-value", "", nil)
 
 		// then
 		require.Error(t, err)
+	})
+}
+
+func TestEnrollAccountCommandPlacesAccount(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should place a new account at the requested priority", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    validCreds(),
+			Identity: &entities.AccountIdentity{EmailAddress: "c@example.com", AccountUUID: "uuid-c"},
+		}
+		command := commands.NewEnrollAccountCommand(accounts, credentials)
+		priority := priorityOf(t, entities.PriorityTop)
+
+		// when
+		err := command.Execute("", "", &priority)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"c@example.com", "a@example.com", "b@example.com"},
+			emailsInOrder(accounts.Store))
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail,
+			"switching to a new primary is the monitor's job, not enroll's")
+	})
+
+	t.Run("should keep a re-enrolled account's place when no priority is given", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: threeAccountStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    validCreds(),
+			Identity: &entities.AccountIdentity{EmailAddress: "b@example.com"},
+		}
+		command := commands.NewEnrollAccountCommand(accounts, credentials)
+
+		// when
+		err := command.Execute("", "", nil)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a@example.com", "b@example.com", "c@example.com"},
+			emailsInOrder(accounts.Store))
+	})
+
+	t.Run("should not save when the requested position is past the last account", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    validCreds(),
+			Identity: &entities.AccountIdentity{EmailAddress: "c@example.com"},
+		}
+		command := commands.NewEnrollAccountCommand(accounts, credentials)
+		priority := priorityOf(t, "9")
+
+		// when
+		err := command.Execute("", "", &priority)
+
+		// then
+		require.ErrorIs(t, err, entities.ErrInvalidPriority)
+		assert.Zero(t, accounts.SaveCalls)
 	})
 }

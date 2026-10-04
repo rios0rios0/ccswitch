@@ -15,6 +15,7 @@
 - **Usage monitoring**: a background daemon polls the Claude usage endpoint (`/api/oauth/usage`) for every enrolled account, so it knows when the active one is exhausted and keeps each backup's tokens alive.
 - **Automatic rotation**: when the active account crosses a utilization threshold (default 99%), it swaps in the next account that still has capacity. Retune it at any time with `ccswitch threshold <percent>` — a running daemon picks the new value up without a restart.
 - **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
+- **Account management**: list, inspect, reprioritize, reorder and remove enrolled accounts from the command line; `ccswitch list` shows when every limit of every account resets.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
 - **Cross-platform**: Linux, macOS, and Windows, on amd64 and arm64.
@@ -65,7 +66,7 @@ highest-priority account below the new threshold becomes active.
 
 ### Rotation policy
 
-By default (`--prefer-primary`) the monitor always runs on the **highest-priority account that has capacity**. Priority is enrollment order, so the first account you enroll is the primary — check the numbering with `ccswitch list`. It falls back to a backup only while the primary is exhausted, and switches back to the primary as soon as the primary's limits reset.
+By default (`--prefer-primary`) the monitor always runs on the **highest-priority account that has capacity**. Priority starts out as enrollment order, so the first account you enroll is the primary; `ccswitch list` numbers the accounts from 1 for the primary, and [Managing accounts](#managing-accounts) shows how to change the order. It falls back to a backup only while the primary is exhausted, and switches back to the primary as soon as the primary's limits reset.
 
 An exhausted account is held until **every** limit that put it over the threshold has reset — not merely the soonest one. That matters when a short window (the 5-hour session) resets while a long one (the weekly limit) is still saturated: releasing the account early would select it, immediately exhaust it again, and flap. That recorded reset time is an upper bound, not a lease: the monitor keeps polling the account and releases it as soon as a poll shows it back under the threshold.
 
@@ -127,7 +128,12 @@ ccswitch enroll                    # capture the currently logged-in Claude acco
 # log in as another account with `claude` then `/login`, then:
 ccswitch enroll                    # capture the next account
 ccswitch enroll --token <token> --email <email>   # enroll a long-lived token (manual fallback only, see below)
-ccswitch list                      # list all accounts with live usage
+ccswitch enroll --priority top     # capture it as the new primary (see Managing accounts)
+ccswitch list                      # list all accounts with live usage and when each limit resets
+ccswitch show <email>              # show one account in detail
+ccswitch update <email> --priority 2   # move an account in the rotation order
+ccswitch reorder <email>...        # set the rotation order, primary first
+ccswitch remove <email>...         # remove accounts from the store
 ccswitch status                    # show the active account and its usage
 ccswitch use <email>               # manually switch accounts
 ccswitch rotate                    # rotate to the next healthy account
@@ -135,6 +141,51 @@ ccswitch threshold 100             # set the rotation threshold, applied immedia
 ccswitch monitor                   # run the daemon in the foreground
 ccswitch monitor --ensure-daemon   # start the daemon in the background if not running
 ```
+
+### Managing accounts
+
+Every enrolled account has a place in the rotation order, and `ccswitch list` numbers them from 1 for
+the primary. Under each account it prints every limit the usage endpoint reports, its utilization, and
+when it resets — as a countdown and as a local time, with the date spelled out because a weekly limit
+can reset a full week out, on today's weekday. An exhausted account also says when it is available
+again, which is when every limit over the threshold has reset:
+
+```text
+rotation threshold: 99%
+* 1. primary@example.com [ok]
+     5-hour         56%  resets in 2h 13m (Tue Sep 29 17:47)
+     7-day          41%  resets in 4d 2h (Sat Oct 3 17:50)
+     7-day scoped   12%  resets in 4d 2h (Sat Oct 3 17:50)
+  2. backup@example.com [exhausted, available again in 31m (Tue Sep 29 16:05)]
+     5-hour        100%  resets in 31m (Tue Sep 29 16:05)
+     7-day          60%  resets in 5d 23h (Mon Oct 5 15:10)
+  3. manual@example.com [manual only] long-lived token; its usage cannot be polled
+```
+
+When the usage endpoint cannot be read for an account — it rate-limits — `list` falls back to the last
+reading the monitor recorded for it, whose reset times still hold. `ccswitch show <email>` prints the
+same for one account together with its plan, when its tokens expire, and when the monitor last polled
+it. Neither ever prints a token.
+
+A priority is a position counted from 1 for the primary, or one of `top`, `bottom`, `up` and `down`:
+
+```bash
+ccswitch update backup@example.com --priority top    # make it the primary
+ccswitch update backup@example.com --priority down   # one place lower
+ccswitch update backup@example.com --priority 2      # second place
+ccswitch reorder work@example.com home@example.com   # these two first; the rest keep their order
+ccswitch enroll --priority top                       # enroll the logged-in account as the primary
+```
+
+Changing the order touches no credentials. The monitor reloads the store on every poll, so a running
+daemon applies the new order on its next one: with `--prefer-primary` it switches to an account you
+moved above the active one as long as that account has capacity.
+
+`ccswitch remove <email>...` removes accounts and their stored tokens; nothing is removed unless every
+named account is enrolled. Enrolling a removed account again takes a login as that account first.
+Removing the active account hands over to the highest-priority remaining account with capacity, and
+installs it at once — or on the next launch while a `claude` session is running. A long-lived account is
+never handed over to automatically; when only those remain, pick one with `ccswitch use <email>`.
 
 ### Flags
 
@@ -190,7 +241,7 @@ ccswitch/
 └── internal/
     ├── domain/
     │   ├── entities/             # Account, Usage, Limit, RotationState, Store, Config
-    │   ├── commands/             # enroll, list, status, use, rotate, ensure, monitor
+    │   ├── commands/             # enroll, list, show, update, remove, reorder, status, use, rotate, threshold, ensure, monitor
     │   └── repositories/         # ports: accounts, credentials, usage, tokens, sessions
     └── infrastructure/
         ├── controllers/          # cobra CLI wiring

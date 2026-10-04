@@ -38,7 +38,11 @@ func NewEnrollAccountCommand(
 // account can only be selected manually, because its token lacks the scope the
 // usage endpoint requires. Otherwise the currently logged-in account is read
 // from disk. The first enrolled account becomes current.
-func (c *EnrollAccountCommand) Execute(token, email string) error {
+//
+// A new account joins at the end of the rotation order and a re-enrolled one keeps
+// its place, unless priority is given, in which case the account moves to the
+// place it names.
+func (c *EnrollAccountCommand) Execute(token, email string, priority *entities.Priority) error {
 	creds, identity, err := c.resolve(token, email)
 	if err != nil {
 		return err
@@ -52,13 +56,19 @@ func (c *EnrollAccountCommand) Execute(token, email string) error {
 	// A long-lived token lacks the `user:profile` scope, so its usage can never be
 	// read; record that so the monitor skips polling it instead of failing.
 	upsertAccount(store, resolvedEmail, identity, creds).LongLived = token != ""
+	if priority != nil {
+		if err = placeAccount(store, resolvedEmail, *priority); err != nil {
+			return err
+		}
+	}
 
 	if err = c.accounts.Save(store); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "[ccswitch] enrolled %s (%d account(s), current: %s)\n",
-		resolvedEmail, len(store.Accounts), store.Rotation.CurrentEmail)
+	fmt.Fprintf(os.Stdout, "[ccswitch] enrolled %s at position %s (current: %s)\n",
+		resolvedEmail, describePosition(store.Position(resolvedEmail), len(store.Accounts)),
+		store.Rotation.CurrentEmail)
 	if token != "" {
 		fmt.Fprintf(os.Stdout,
 			"[ccswitch] %s uses a long-lived token: its usage cannot be polled, so it is "+
@@ -97,6 +107,16 @@ func (c *EnrollAccountCommand) resolve(
 			"ensure ~/.claude.json contains an oauthAccount block")
 	}
 	return creds, identity, nil
+}
+
+// placeAccount moves an enrolled account to the place the priority names in the
+// rotation order.
+func placeAccount(store *entities.Store, email string, priority entities.Priority) error {
+	position, err := priority.Position(store.Position(email), len(store.Accounts))
+	if err != nil {
+		return err
+	}
+	return store.Move(email, position)
 }
 
 // upsertAccount inserts or updates the account for the given email, assigning a

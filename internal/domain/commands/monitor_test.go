@@ -477,6 +477,63 @@ func TestMonitorCommandTick(t *testing.T) {
 		assert.True(t, accounts.Store.Rotation.IsExhausted("a@example.com", now))
 	})
 
+	t.Run("should hand over past a long-lived account when the current one is not enrolled", func(t *testing.T) {
+		t.Parallel()
+		// given: the pointer names an account that is gone, and a long-lived one heads the order
+		store := &entities.Store{
+			Accounts: []entities.Account{
+				{
+					Email:       "long@example.com",
+					Order:       0,
+					Credentials: entities.OAuthCredentials{AccessToken: "long"},
+					LongLived:   true,
+				},
+				{Email: "b@example.com", Order: 1, Credentials: creds("b", "rb")},
+			},
+			Rotation: entities.RotationState{CurrentEmail: "gone@example.com"},
+		}
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "gone", RefreshToken: "rg", Scopes: loginScopes()},
+			Identity: &entities.AccountIdentity{EmailAddress: "gone@example.com"},
+		}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: a long-lived account is only ever selected with `ccswitch use`
+		require.NoError(t, err)
+		assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+		require.NotNil(t, credentials.Written)
+		assert.Equal(t, "rb", credentials.Written.RefreshToken)
+	})
+
+	t.Run("should select no account when only long-lived ones are enrolled and none is current", func(t *testing.T) {
+		t.Parallel()
+		// given
+		store := longLivedOnlyStore()
+		store.Rotation.CurrentEmail = ""
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{
+			Creds:    &entities.OAuthCredentials{AccessToken: "other", RefreshToken: "ro", Scopes: loginScopes()},
+			Identity: &entities.AccountIdentity{EmailAddress: "other@example.com"},
+		}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, &doubles.StubUsageRepository{}, nil,
+			&doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Empty(t, accounts.Store.Rotation.CurrentEmail)
+		assert.Zero(t, credentials.WriteCalls)
+	})
+
 	t.Run("should not poll usage with a stale token when the refresh call fails", func(t *testing.T) {
 		t.Parallel()
 		// given: expired (zero ExpiresAt) credentials and a refresh call that fails,
