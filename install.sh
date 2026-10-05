@@ -126,10 +126,10 @@ binary_file() {
 detect_arch() {
     case "$(uname -m)" in
         x86_64|amd64)    echo "amd64" ;;
-        i386|i686)       echo "386" ;;
         arm64|aarch64)   echo "arm64" ;;
-        armv7l|armv6l)   echo "arm" ;;
-        *)  error "Unsupported architecture: $(uname -m)"; exit 1 ;;
+        # Releases are built for amd64 and arm64 only, so a 32-bit x86 or ARM
+        # machine would otherwise get a 404 for an asset that never existed.
+        *)  error "Unsupported architecture: $(uname -m). Releases are published for amd64 and arm64 only."; exit 1 ;;
     esac
 }
 
