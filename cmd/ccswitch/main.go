@@ -12,6 +12,9 @@ import (
 var version = "dev"
 
 func main() {
+	// Colors are left to logrus, which turns them on for a terminal only: the
+	// monitor daemon logs to a file, and forced colors would fill it with escape
+	// codes.
 	logger.SetFormatter(&logger.TextFormatter{
 		FullTimestamp: true,
 	})

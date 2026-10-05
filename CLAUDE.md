@@ -30,16 +30,20 @@ Clean Architecture; the domain layer must never import infrastructure.
 - `internal/domain/entities` — pure types (`Account`, `Store`, `Settings`, `Usage`, `Limit`,
   `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`).
 - `internal/domain/commands` — one command per CLI verb (`enroll`, `list`, `show`, `update`,
-  `remove`, `reorder`, `status`, `use`, `rotate`, `ensure`, `threshold`, `monitor`), each constructed
-  from repository ports.
-- `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`).
+  `remove`, `reorder`, `status`, `use`, `rotate`, `ensure`, `threshold`, `monitor`, `self-update`),
+  each constructed from repository ports. `version` is printed by the controller alone.
+- `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`,
+  `SelfUpdate`).
 - `internal/infrastructure/repositories` — adapters: JSON store, the credentials swappers
   (`FileCredentialsRepository` for `.credentials.json`, `KeychainCredentialsRepository` for the macOS
   login keychain; both patch `oauthAccount` in `~/.claude.json` through the shared
-  `claudeStateFile`), HTTP usage/refresh clients, and the session probes (`ProcSessionsRepository`
+  `claudeStateFile`), HTTP usage/refresh clients, the session probes (`ProcSessionsRepository`
   scanning `/proc`, `PSSessionsRepository` reading the macOS process table,
-  `ToolhelpSessionsRepository` walking a Windows ToolHelp32 snapshot).
-- `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`).
+  `ToolhelpSessionsRepository` walking a Windows ToolHelp32 snapshot), and
+  `CliforgeSelfUpdateRepository`, which checks for and installs GitHub releases through the shared
+  [cliforge](https://github.com/rios0rios0/cliforge) library.
+- `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`), including the root's
+  `--verbose`/`--version` flags and the passive update check its `PersistentPreRun` runs.
 - `internal/infrastructure/services` — `DaemonService` (pidfile + detached self-exec).
 
 Platform differences are isolated in `_unix.go` / `_darwin.go` / `_windows.go` pairs —
@@ -130,12 +134,27 @@ else branches on the OS; keep it that way.
   naming the same account — while the CLI counts positions from 1 for the primary (`Store.Position`,
   `entities.ParsePriority`). Reordering touches no credentials: the monitor reloads the store every
   tick and `selectTarget` compares `Order` values, which is also why they must never tie.
+- **The passive update check stays off the commands nobody watches.** cliforge looks for a newer
+  release at most once a day, and it marks the day as checked *before* its background lookup returns.
+  `ensure` runs before every `claude` launch and promises no network, `monitor` is the daemon whose
+  output only reaches its log file, and `completion` is typically sourced from a shell rc on every
+  start — a check from any of them would spend the day's only lookup where no notice is ever read.
+  `checksForUpdates` keeps them out, together with `version`, `self-update`, `help` and cobra's
+  `__complete`; it judges a command by its ancestor directly under the root, because `completion
+  bash` is named `bash`. Exempt any new command that the shell integration runs.
+- **`self-update` cannot update a running daemon.** The daemon keeps running the binary it was
+  started from, and `monitor --ensure-daemon` finds it alive and leaves it be, so after an install
+  `self-update` names the daemon's pid for the user to stop. Whether a release went in is read off
+  the binary — `os.SameFile` on the executable before and after — because cliforge reports success
+  the same way for an install, a dry run, an up-to-date binary and a declined prompt.
 
 ## Conventions
 
 - All persistence is atomic (temp file + rename) and owner-only (0600).
 - Logrus is imported aliased as `logger`; user-facing text goes to stdout/stderr with a `[ccswitch]`
-  prefix.
+  prefix. Colors are left to logrus, which uses them on a terminal only: the daemon logs to a file, so
+  `ForceColors` would fill it with escape codes. `-v`/`--verbose` and `DEBUG=true` turn on debug
+  logging, and `daemonArgs` passes `--verbose` on to a daemon started by an invocation that named it.
 - Tests live in external `_test` packages, structure bodies with `// given` / `// when` / `// then`
   blocks, and rely on hand-rolled doubles in `test/doubles` — no mocking library. HTTP adapters are
   tested against a real `httptest.NewServer`.

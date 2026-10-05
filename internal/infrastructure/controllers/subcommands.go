@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -229,7 +228,7 @@ func newRotateCommand(cfg *entities.Config) *cobra.Command {
 func newEnsureCommand(cfg *entities.Config) *cobra.Command {
 	var quiet bool
 	cmd := &cobra.Command{
-		Use:   "ensure",
+		Use:   ensureCommandName,
 		Short: "Install the current account's credentials if not already active (no network)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			deps := newDeps(cfg)
@@ -240,13 +239,14 @@ func newEnsureCommand(cfg *entities.Config) *cobra.Command {
 	return cmd
 }
 
-// newVersionCommand builds the `version` subcommand.
+// newVersionCommand builds the `version` subcommand, which prints the bare version
+// so scripts can read it; `ccswitch --version` prints the labelled form.
 func newVersionCommand(version string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
+		Use:   versionCommandName,
 		Short: "Print the ccswitch version",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Fprintln(os.Stdout, version)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), version)
 			return nil
 		},
 	}

@@ -1,0 +1,3 @@
+kind: 'Added'
+body: 'added a once-a-day check for a newer release to the commands run by hand: it runs in the background and prints a one-line notice when its lookup finds one before the command ends. `ensure` and `monitor` never run it, since the shell integration runs them unattended and a notice there would go unread while still spending the day''s check, and neither do `completion`, `help`, `version` and `self-update`'
+time: '2026-10-05T18:24:12.253825718Z'

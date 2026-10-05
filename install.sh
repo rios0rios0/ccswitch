@@ -3,7 +3,8 @@
 # ccswitch Installation Script
 #
 # Downloads and installs ccswitch from GitHub releases.
-# Automatically detects your operating system and architecture.
+# Automatically detects your operating system and architecture. On Windows it
+# runs from Git Bash, MSYS2 or Cygwin, and needs unzip.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/rios0rios0/ccswitch/main/install.sh | sh
@@ -29,6 +30,8 @@ set -e
 REPO_OWNER="rios0rios0"
 REPO_NAME="ccswitch"
 BINARY_NAME="ccswitch"
+# The file the binary is installed as, which main() sets per platform.
+BINARY_FILE="$BINARY_NAME"
 
 # Defaults
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
@@ -102,10 +105,21 @@ parse_args() {
 # Detect operating system
 detect_os() {
     case "$(uname -s)" in
-        Linux*)   echo "linux" ;;
-        Darwin*)  echo "darwin" ;;
-        *)  error "Unsupported operating system: $(uname -s). ccswitch requires a Unix-like OS (Linux, WSL, or macOS)."; exit 1 ;;
+        Linux*)                 echo "linux" ;;
+        Darwin*)                echo "darwin" ;;
+        CYGWIN*|MINGW*|MSYS*)   echo "windows" ;;
+        *)  error "Unsupported operating system: $(uname -s). On Windows, run this script from Git Bash, MSYS2 or Cygwin."; exit 1 ;;
     esac
+}
+
+# The file name the binary is installed under: Windows only runs an executable
+# through its .exe extension.
+binary_file() {
+    if [ "$1" = "windows" ]; then
+        echo "${BINARY_NAME}.exe"
+    else
+        echo "${BINARY_NAME}"
+    fi
 }
 
 # Detect architecture
@@ -166,19 +180,22 @@ get_latest_tag() {
 }
 
 # Build the download URL for a given version, OS, and architecture.
-# GoReleaser naming: {project}-{version}-{os}-{arch}.tar.gz
+# GoReleaser naming: {project}-{version}-{os}-{arch}.tar.gz (.zip on Windows)
 build_download_url() {
     tag="$1"; os="$2"; arch="$3"
     ver=$(echo "$tag" | sed 's/^v//')
 
-    echo "${GITHUB_RELEASE_BASE}/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag}/${BINARY_NAME}-${ver}-${os}-${arch}.tar.gz"
+    ext="tar.gz"
+    [ "$os" = "windows" ] && ext="zip"
+
+    echo "${GITHUB_RELEASE_BASE}/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag}/${BINARY_NAME}-${ver}-${os}-${arch}.${ext}"
 }
 
 # Check if the binary is already installed
 check_existing_installation() {
-    if [ -f "${INSTALL_DIR}/${BINARY_NAME}" ]; then
+    if [ -f "${INSTALL_DIR}/${BINARY_FILE}" ]; then
         if [ "$FORCE" = "false" ]; then
-            warn "${BINARY_NAME} is already installed at ${INSTALL_DIR}/${BINARY_NAME}"
+            warn "${BINARY_NAME} is already installed at ${INSTALL_DIR}/${BINARY_FILE}"
             warn "Use --force to reinstall"
             return 1
         fi
@@ -189,12 +206,18 @@ check_existing_installation() {
 
 # Main installation logic
 install_binary() {
-    download_url="$1"; tag="$2"
+    download_url="$1"; os="$2"; tag="$3"
 
     if [ "$DRY_RUN" = "true" ]; then
         info "[DRY RUN] Would download: $download_url"
-        info "[DRY RUN] Would install to: ${INSTALL_DIR}/${BINARY_NAME}"
+        info "[DRY RUN] Would install to: ${INSTALL_DIR}/${BINARY_FILE}"
         return 0
+    fi
+
+    # Windows releases are zip archives, which tar cannot read
+    if [ "$os" = "windows" ] && ! command_exists unzip; then
+        error "unzip is required to extract the Windows release; install it, or download the .zip from the releases page"
+        exit 1
     fi
 
     tmp_archive=$(mktemp)
@@ -214,34 +237,38 @@ install_binary() {
     fi
 
     info "Extracting archive..."
-    tar -xzf "$tmp_archive" -C "$tmp_dir"
+    if [ "$os" = "windows" ]; then
+        unzip -q -o "$tmp_archive" -d "$tmp_dir"
+    else
+        tar -xzf "$tmp_archive" -C "$tmp_dir"
+    fi
 
-    src_binary="${tmp_dir}/${BINARY_NAME}"
+    src_binary="${tmp_dir}/${BINARY_FILE}"
 
     if [ ! -f "$src_binary" ]; then
         rm -f "$tmp_archive"; rm -rf "$tmp_dir"
-        error "Binary '${BINARY_NAME}' not found inside the archive"
+        error "Binary '${BINARY_FILE}' not found inside the archive"
         exit 1
     fi
 
     mkdir -p "$INSTALL_DIR"
-    mv "$src_binary" "${INSTALL_DIR}/${BINARY_NAME}"
-    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    mv "$src_binary" "${INSTALL_DIR}/${BINARY_FILE}"
+    chmod +x "${INSTALL_DIR}/${BINARY_FILE}"
 
     rm -f "$tmp_archive"
     rm -rf "$tmp_dir"
 
-    success "${BINARY_NAME} has been installed to ${INSTALL_DIR}/${BINARY_NAME}"
+    success "${BINARY_NAME} has been installed to ${INSTALL_DIR}/${BINARY_FILE}"
 }
 
 # Post-install verification and quickstart hint
 verify_installation() {
     if [ "$DRY_RUN" = "true" ]; then
-        info "[DRY RUN] Would verify installation at: ${INSTALL_DIR}/${BINARY_NAME}"
+        info "[DRY RUN] Would verify installation at: ${INSTALL_DIR}/${BINARY_FILE}"
         return 0
     fi
 
-    if [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
+    if [ -x "${INSTALL_DIR}/${BINARY_FILE}" ]; then
         success "Installation verified"
     else
         error "Installation verification failed"
@@ -254,6 +281,9 @@ verify_installation() {
             warn "${INSTALL_DIR} is not in your PATH"
             info "Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
             info "  export PATH=\"\$PATH:${INSTALL_DIR}\""
+            if [ "$1" = "windows" ]; then
+                info "To run it from PowerShell or cmd too, add that directory to your Windows user PATH."
+            fi
             ;;
     esac
 }
@@ -268,6 +298,7 @@ main() {
 
     os=$(detect_os)
     arch=$(detect_arch)
+    BINARY_FILE=$(binary_file "$os")
     info "Detected platform: ${os}/${arch}"
 
     tag="$VERSION"
@@ -275,7 +306,8 @@ main() {
         info "Fetching latest release..."
         tag=$(get_latest_tag)
     else
-        case "$tag" in v*) ;; *) tag="v${tag}" ;; esac
+        # Release tags carry no "v" prefix, so "v1.0.0" names the tag "1.0.0"
+        tag="${tag#v}"
     fi
     info "Version: ${tag}"
 
@@ -283,8 +315,8 @@ main() {
 
     check_existing_installation || exit 0
 
-    install_binary "$download_url" "$tag"
-    verify_installation
+    install_binary "$download_url" "$os" "$tag"
+    verify_installation "$os"
 
     info ""
     success "Installation complete! Quick start:"

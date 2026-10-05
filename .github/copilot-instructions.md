@@ -16,18 +16,21 @@ Clean Architecture with a strict domain / infrastructure split:
 - `internal/domain/commands` — application logic: `EnrollAccountCommand`, `ListAccountsCommand`,
   `GetAccountCommand` (`show`), `UpdateAccountCommand`, `DeleteAccountsCommand` (`remove`),
   `ReorderAccountsCommand`, `StatusCommand`, `UseAccountCommand`, `RotateAccountCommand`,
-  `EnsureActiveCommand`, `SetThresholdCommand`, `MonitorCommand`. Each takes ports and exposes `Execute` (or `Run`/`Tick`
-  for the daemon).
+  `EnsureActiveCommand`, `SetThresholdCommand`, `MonitorCommand`, `SelfUpdateCommand`
+  (`self-update`). Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon).
 - `internal/domain/repositories` — ports: `AccountsRepository`, `CredentialsRepository`,
-  `UsageRepository`, `TokensRepository`, `SessionsRepository`.
+  `UsageRepository`, `TokensRepository`, `SessionsRepository`, `SelfUpdateRepository`.
 - `internal/infrastructure/repositories` — adapters: `JSONAccountsRepository` (atomic 0600 store),
   `FileCredentialsRepository` (swaps `.credentials.json`), `KeychainCredentialsRepository` (swaps the
   macOS `Claude Code-credentials` keychain item via `security`) — both patch `oauthAccount` in
   `~/.claude.json` through the shared `claudeStateFile` — `AnthropicUsageRepository`
   (`GET /api/oauth/usage`), `AnthropicTokensRepository` (OAuth refresh), `ProcSessionsRepository`
   (scans `/proc` for a running `claude`), `PSSessionsRepository` (reads the macOS process table),
-  `ToolhelpSessionsRepository` (walks a Windows ToolHelp32 snapshot for `claude.exe`).
-- `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`).
+  `ToolhelpSessionsRepository` (walks a Windows ToolHelp32 snapshot for `claude.exe`),
+  `CliforgeSelfUpdateRepository` (checks for and installs GitHub releases through the shared
+  `cliforge` library).
+- `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`), including the root's
+  `--verbose`/`--version` flags and the passive update check its `PersistentPreRun` runs.
 - `internal/infrastructure/services` — `DaemonService` (pidfile + detached self-exec).
 
 ## Invariants
@@ -102,6 +105,17 @@ Clean Architecture with a strict domain / infrastructure split:
   still holds the pair the refresh consumed; that guard is what keeps it from overwriting a different
   account's credentials. It is used by `monitor`, `list` and `status` alike — every command that
   polls usage can spend the refresh token.
+- **The passive update check stays off the commands nobody watches.** cliforge looks for a newer
+  release at most once a day and marks the day as checked before its background lookup returns.
+  `ensure` (run before every `claude` launch, promised no network), `monitor` (the daemon, whose
+  output only reaches its log file) and `completion` (sourced from shell rc files) would spend that
+  lookup where no notice is read, so `checksForUpdates` exempts them along with `version`,
+  `self-update`, `help` and `__complete`, judging a command by its ancestor directly under the root.
+- **`self-update` cannot update a running daemon.** The daemon keeps running the binary it started
+  from and `--ensure-daemon` leaves a live one be, so after an install `self-update` names the
+  daemon's pid for the user to stop. An install is detected with `os.SameFile` on the executable
+  before and after, since cliforge reports success the same way for an install, a dry run, an
+  up-to-date binary and a declined prompt.
 
 ## Key external contracts
 
@@ -124,7 +138,8 @@ make cross-compile  # go vet for all six released OS/arch targets
 ## Conventions
 
 - Logging uses Logrus aliased as `logger`; user-facing output goes to `os.Stdout`/`os.Stderr` with a
-  `[ccswitch]` prefix.
+  `[ccswitch]` prefix. Colors are not forced, because the daemon logs to a file. `-v`/`--verbose` and
+  `DEBUG=true` turn on debug logging, and `daemonArgs` passes `--verbose` on to the daemon.
 - Tests live in external `_test` packages with `// given/when/then` blocks and carry no build tags.
   No mocking library — use `test/doubles`; HTTP adapters are tested against a real `httptest.NewServer`.
 - All persistence is atomic (temp file + rename) and owner-only (0600).

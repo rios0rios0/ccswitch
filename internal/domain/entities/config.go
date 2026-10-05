@@ -3,9 +3,9 @@ package entities
 import "time"
 
 // Config holds the resolved runtime configuration for ccswitch: filesystem
-// locations, the rotation threshold, the daemon poll interval, and the OAuth
-// endpoints. It is assembled from defaults, environment, and flags by the
-// controllers layer and injected into commands.
+// locations, the rotation threshold, the daemon poll interval, the OAuth
+// endpoints, and how much to log. It is assembled from defaults, environment, and
+// flags by the controllers layer and injected into commands.
 type Config struct {
 	// CredentialsPath is the Claude Code active-credentials file (~/.claude/.credentials.json).
 	CredentialsPath string
@@ -36,6 +36,9 @@ type Config struct {
 	TokenURL string
 	// ClientID is the Claude Code public OAuth client identifier used for refresh.
 	ClientID string
+	// Verbose turns on debug logging. A monitor daemon started by an invocation
+	// that asked for it logs at debug level too.
+	Verbose bool
 }
 
 // ResolveThreshold returns the rotation threshold to apply, preferring an
