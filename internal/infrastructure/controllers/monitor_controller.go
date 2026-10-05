@@ -25,7 +25,7 @@ const (
 func newMonitorCommand(cfg *entities.Config) *cobra.Command {
 	var ensureDaemon bool
 	cmd := &cobra.Command{
-		Use:   "monitor",
+		Use:   monitorCommandName,
 		Short: "Run the usage-monitoring daemon that rotates accounts on exhaustion",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			deps := newDeps(cfg)
@@ -81,7 +81,7 @@ func runMonitorForeground(deps *deps) error {
 // command exists to provide.
 func daemonArgs(cfg *entities.Config) []string {
 	args := []string{
-		"monitor",
+		monitorCommandName,
 		"--interval", cfg.Interval.String(),
 		"--store", cfg.StorePath,
 		"--credentials", cfg.CredentialsPath,
@@ -91,6 +91,9 @@ func daemonArgs(cfg *entities.Config) []string {
 	if cfg.ThresholdExplicit {
 		args = append(args,
 			"--threshold", strconv.FormatFloat(cfg.Threshold, 'f', floatPrecision, float64BitSize))
+	}
+	if cfg.Verbose {
+		args = append(args, "--"+verboseFlag)
 	}
 	return args
 }

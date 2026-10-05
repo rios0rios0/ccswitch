@@ -83,6 +83,51 @@ func TestDaemonServiceRunning(t *testing.T) {
 	})
 }
 
+func TestDaemonServiceRunningPid(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should return the recorded process id when it is alive", func(t *testing.T) {
+		t.Parallel()
+		// given
+		daemon, _ := newDaemonService(t)
+		require.NoError(t, daemon.WriteSelf())
+
+		// when
+		pid, running := daemon.RunningPid()
+
+		// then
+		assert.True(t, running)
+		assert.Equal(t, os.Getpid(), pid)
+	})
+
+	t.Run("should report nothing running when the pidfile is absent", func(t *testing.T) {
+		t.Parallel()
+		// given
+		daemon, _ := newDaemonService(t)
+
+		// when
+		pid, running := daemon.RunningPid()
+
+		// then
+		assert.False(t, running)
+		assert.Zero(t, pid)
+	})
+
+	t.Run("should report nothing running when the pidfile holds an invalid pid", func(t *testing.T) {
+		t.Parallel()
+		// given
+		daemon, pidPath := newDaemonService(t)
+		writePidFile(t, pidPath, "0")
+
+		// when
+		pid, running := daemon.RunningPid()
+
+		// then
+		assert.False(t, running)
+		assert.Zero(t, pid)
+	})
+}
+
 func TestDaemonServiceEnsure(t *testing.T) {
 	t.Parallel()
 

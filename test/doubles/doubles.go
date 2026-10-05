@@ -147,3 +147,32 @@ type StubSessionsRepository struct {
 func (r *StubSessionsRepository) ClaudeRunning() bool {
 	return r.Running
 }
+
+// StubSelfUpdateRepository is a SelfUpdateRepository double that answers with a
+// canned result and records how it was driven.
+type StubSelfUpdateRepository struct {
+	// Installed is what Update reports when it succeeds.
+	Installed   bool
+	UpdateErr   error
+	UpdateCalls int
+	// DryRun and Force record the flags of the last Update call.
+	DryRun     bool
+	Force      bool
+	CheckCalls int
+}
+
+// Update records the flags it was called with and returns the canned result.
+func (r *StubSelfUpdateRepository) Update(dryRun, force bool) (bool, error) {
+	r.UpdateCalls++
+	r.DryRun = dryRun
+	r.Force = force
+	if r.UpdateErr != nil {
+		return false, r.UpdateErr
+	}
+	return r.Installed, nil
+}
+
+// CheckForUpdates counts the call.
+func (r *StubSelfUpdateRepository) CheckForUpdates() {
+	r.CheckCalls++
+}

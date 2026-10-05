@@ -31,11 +31,18 @@ func NewDaemonService(pidPath, logPath string) *DaemonService {
 
 // Running reports whether a live monitor process is recorded in the pidfile.
 func (d *DaemonService) Running() bool {
+	_, running := d.RunningPid()
+	return running
+}
+
+// RunningPid returns the id of the live monitor process recorded in the pidfile,
+// and false when no monitor is running.
+func (d *DaemonService) RunningPid() (int, bool) {
 	pid, err := d.readPid()
-	if err != nil {
-		return false
+	if err != nil || !processAlive(pid) {
+		return 0, false
 	}
-	return processAlive(pid)
+	return pid, true
 }
 
 // Ensure starts a detached monitor process when one is not already running and

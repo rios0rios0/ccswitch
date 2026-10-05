@@ -20,6 +20,7 @@
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
 - **Cross-platform**: Linux, macOS, and Windows, on amd64 and arm64.
 - **Seamless shell integration**: an optional shell wrapper (a few lines shown below) keeps the daemon alive and ensures each `claude` launch uses the current account.
+- **Self-updating**: `ccswitch self-update` installs the latest release in place, and the commands you run by hand check for a newer release at most once a day.
 
 ## How it works
 
@@ -88,7 +89,27 @@ Or build from source:
 make install    # builds and copies the binary to ~/.local/bin/ccswitch
 ```
 
-Download pre-built binaries from the [releases page](https://github.com/rios0rios0/ccswitch/releases). The installer script is for Linux and macOS; on Windows, download the `.zip` and put `ccswitch.exe` somewhere on your `PATH`.
+Download pre-built binaries from the [releases page](https://github.com/rios0rios0/ccswitch/releases). On Windows, run the installer from Git Bash, MSYS2 or Cygwin (it needs `unzip`), or download the `.zip` and put `ccswitch.exe` somewhere on your `PATH`.
+
+The installer takes `--version <version>` to pin a release, `--install-dir <dir>` for somewhere other than `~/.local/bin`, `--force` to reinstall, and `--dry-run` to see what it would do.
+
+### Updating
+
+```bash
+ccswitch self-update            # install the latest release, after asking
+ccswitch self-update --force    # install it without asking
+ccswitch self-update --dry-run  # only show what would be installed
+ccswitch --version              # or `ccswitch version` for the bare number
+```
+
+The commands you run by hand — `list`, `status`, `use` and the like — also look for a newer release in
+the background, at most once a day, and print a one-line notice if the answer arrives before they
+finish. The commands the [shell integration](#shell-integration) runs unattended never look: `ensure`
+stays off the network, and the `monitor` daemon's output only reaches its log file.
+
+A monitor daemon that is already running keeps running the binary it was started from, so after an
+update `self-update` names its process: stop it, and the next `ccswitch monitor --ensure-daemon`
+starts the new version.
 
 ### macOS notes
 
@@ -140,6 +161,8 @@ ccswitch rotate                    # rotate to the next healthy account
 ccswitch threshold 100             # set the rotation threshold, applied immediately
 ccswitch monitor                   # run the daemon in the foreground
 ccswitch monitor --ensure-daemon   # start the daemon in the background if not running
+ccswitch self-update               # update ccswitch to the latest release (see Updating)
+ccswitch version                   # print the version
 ```
 
 ### Managing accounts
@@ -196,6 +219,7 @@ never handed over to automatically; when only those remain, pick one with `ccswi
 | `--prefer-primary` | `true`                              | Always run on the highest-priority account with capacity, returning to the primary as soon as its limits reset. |
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
 | `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file. Ignored on macOS, where the login keychain is used instead. |
+| `-v`, `--verbose` | `false`                              | Enable debug logging. A daemon started by `monitor --ensure-daemon -v` logs at debug level too. `DEBUG=true` in the environment does the same. |
 
 ### Long-lived tokens
 
@@ -241,11 +265,11 @@ ccswitch/
 └── internal/
     ├── domain/
     │   ├── entities/             # Account, Usage, Limit, RotationState, Store, Config
-    │   ├── commands/             # enroll, list, show, update, remove, reorder, status, use, rotate, threshold, ensure, monitor
-    │   └── repositories/         # ports: accounts, credentials, usage, tokens, sessions
+    │   ├── commands/             # enroll, list, show, update, remove, reorder, status, use, rotate, threshold, ensure, monitor, self-update
+    │   └── repositories/         # ports: accounts, credentials, usage, tokens, sessions, self-update
     └── infrastructure/
         ├── controllers/          # cobra CLI wiring
-        ├── repositories/         # JSON store, credentials swappers (file / macOS keychain), HTTP usage/token clients, session probes
+        ├── repositories/         # JSON store, credentials swappers (file / macOS keychain), HTTP usage/token clients, session probes, GitHub releases (via cliforge)
         └── services/             # background daemon supervision
 ```
 

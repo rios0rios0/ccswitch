@@ -5,8 +5,10 @@ package controllers
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
+	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
@@ -25,6 +27,24 @@ const (
 	defaultTokenURL  = "https://platform.claude.com/v1/oauth/token" //nolint:gosec // public endpoint, not a secret
 	pidFileName      = "monitor.pid"
 	logFileName      = "monitor.log"
+
+	// binaryName is the name ccswitch is installed and released under; its GitHub
+	// releases live at releaseOwner/releaseRepository.
+	binaryName        = "ccswitch"
+	releaseOwner      = "rios0rios0"
+	releaseRepository = "ccswitch"
+
+	// verboseFlag turns on debug logging, and the monitor passes it on to the daemon
+	// it starts.
+	verboseFlag = "verbose"
+
+	ensureCommandName     = "ensure"
+	monitorCommandName    = "monitor"
+	selfUpdateCommandName = "self-update"
+	versionCommandName    = "version"
+	// helpCommandName and completionCommandName are the commands cobra adds itself.
+	helpCommandName       = "help"
+	completionCommandName = "completion"
 )
 
 // deps bundles the infrastructure adapters and config shared by the subcommands.
@@ -38,22 +58,38 @@ type deps struct {
 	daemon      *services.DaemonService
 }
 
-// NewRootCommand builds the ccswitch root command with every subcommand wired.
+// NewRootCommand builds the ccswitch root command with every subcommand wired,
+// updating itself from the GitHub releases of the version it was built as.
 func NewRootCommand(version string) *cobra.Command {
+	return newRootCommand(version, repositories.NewCliforgeSelfUpdateRepository(
+		releaseOwner, releaseRepository, binaryName, version,
+	))
+}
+
+// newRootCommand builds the root command over the given release channel, which
+// tests replace so that no invocation reaches GitHub.
+func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.Command {
 	cfg := defaultConfig()
 
 	root := &cobra.Command{
-		Use:           "ccswitch",
+		Use:           binaryName,
 		Short:         "Monitor Claude Code usage and rotate between backup accounts",
 		Long:          "ccswitch watches Claude Code usage limits and transparently rotates between enrolled backup accounts when the active account runs out.",
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
 	bindPersistentFlags(root, cfg)
-	// Whether --threshold was named decides who wins between the flag and the value
-	// `ccswitch threshold` persisted, so it has to be read after parsing.
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		// Whether --threshold was named decides who wins between the flag and the
+		// value `ccswitch threshold` persisted, so it has to be read after parsing.
 		cfg.ThresholdExplicit = cmd.Flags().Changed("threshold")
+		if cfg.Verbose {
+			logger.SetLevel(logger.DebugLevel)
+		}
+		if checksForUpdates(cmd) {
+			updates.CheckForUpdates()
+		}
 	}
 
 	root.AddCommand(
@@ -69,9 +105,30 @@ func NewRootCommand(version string) *cobra.Command {
 		newThresholdCommand(cfg),
 		newEnsureCommand(cfg),
 		newMonitorCommand(cfg),
+		newSelfUpdateCommand(cfg, updates),
 		newVersionCommand(version),
 	)
 	return root
+}
+
+// checksForUpdates reports whether running cmd also checks for a newer release.
+//
+// The commands about the version itself skip it, as do cobra's help and shell
+// completion, and the two that the shell integration runs unattended: ensure,
+// before every claude launch and promised to stay off the network, and monitor,
+// whose daemon writes to a log file. A notice there would never be read, and the
+// check, done at most once a day, would be spent for nothing.
+func checksForUpdates(cmd *cobra.Command) bool {
+	// `completion bash` is cobra's completion command, so it is judged by the
+	// command directly under the root.
+	for cmd.HasParent() && cmd.Parent().HasParent() {
+		cmd = cmd.Parent()
+	}
+	return !slices.Contains([]string{
+		versionCommandName, selfUpdateCommandName,
+		ensureCommandName, monitorCommandName,
+		helpCommandName, completionCommandName, cobra.ShellCompRequestCmd,
+	}, cmd.Name())
 }
 
 // bindPersistentFlags attaches the flags shared by all subcommands, writing into
@@ -90,12 +147,13 @@ func bindPersistentFlags(root *cobra.Command, cfg *entities.Config) {
 		"path to Claude Code .credentials.json")
 	flags.StringVar(&cfg.ClaudeJSONPath, "claude-json", cfg.ClaudeJSONPath,
 		"path to Claude Code ~/.claude.json (for the oauthAccount identity)")
+	flags.BoolVarP(&cfg.Verbose, verboseFlag, "v", cfg.Verbose,
+		"enable debug logging, which a monitor daemon started by this invocation keeps")
 }
 
 // newDeps constructs the infrastructure adapters from the resolved config. It is
 // called inside each subcommand's RunE so it observes final flag values.
 func newDeps(cfg *entities.Config) *deps {
-	stateDir := filepath.Dir(cfg.StorePath)
 	return &deps{
 		config:      cfg,
 		accounts:    repositories.NewJSONAccountsRepository(cfg.StorePath),
@@ -103,11 +161,18 @@ func newDeps(cfg *entities.Config) *deps {
 		usage:       repositories.NewAnthropicUsageRepository(cfg.UsageBaseURL, nil),
 		tokens:      repositories.NewAnthropicTokensRepository(cfg.TokenURL, cfg.ClientID, nil),
 		sessions:    newSessionsRepository(),
-		daemon: services.NewDaemonService(
-			filepath.Join(stateDir, pidFileName),
-			filepath.Join(stateDir, logFileName),
-		),
+		daemon:      newDaemonService(cfg),
 	}
+}
+
+// newDaemonService supervises the monitor daemon through the pidfile and log kept
+// beside the store.
+func newDaemonService(cfg *entities.Config) *services.DaemonService {
+	stateDir := filepath.Dir(cfg.StorePath)
+	return services.NewDaemonService(
+		filepath.Join(stateDir, pidFileName),
+		filepath.Join(stateDir, logFileName),
+	)
 }
 
 // defaultConfig returns the configuration seeded from the user's home directory

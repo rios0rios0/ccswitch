@@ -12,6 +12,7 @@ import (
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/controllers"
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/repositories"
+	"github.com/rios0rios0/ccswitch/test/doubles"
 )
 
 const (
@@ -23,9 +24,21 @@ const (
 // executeCLI runs the public command tree against an isolated store. Explicit
 // token enrollment keeps these tests independent of real logins and keychains.
 func executeCLI(storePath string, args ...string) error {
-	root := controllers.NewRootCommand("test")
-	root.SetOut(io.Discard)
-	root.SetErr(io.Discard)
+	return executeCLIWith(storePath, &doubles.StubSelfUpdateRepository{}, io.Discard, io.Discard, args...)
+}
+
+// executeCLIWith runs the public command tree against an isolated store and the
+// given release channel, which stands in for GitHub, writing what cobra prints to
+// out and errOut.
+func executeCLIWith(
+	storePath string,
+	updates *doubles.StubSelfUpdateRepository,
+	out, errOut io.Writer,
+	args ...string,
+) error {
+	root := controllers.NewRootCommandWithUpdates("test", updates)
+	root.SetOut(out)
+	root.SetErr(errOut)
 	root.SetArgs(append([]string{
 		"--store", storePath,
 		"--credentials", filepath.Join(filepath.Dir(storePath), "credentials.json"),
