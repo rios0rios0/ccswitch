@@ -8,8 +8,9 @@ type SelfUpdateRepository interface {
 	// newer, and reports whether it did. dryRun only reports what would be
 	// installed, and force skips the confirmation prompt.
 	Update(dryRun, force bool) (bool, error)
-	// CheckForUpdates warns when a newer release is out. It looks at most once a
-	// day, never holds up the command it runs alongside, and never fails one: a
-	// lookup that goes wrong is only logged at debug level.
+	// CheckForUpdates warns when a newer release is out. It counts a day as checked
+	// once a lookup has answered and starts at most five lookups a day, never holds
+	// up the command it runs alongside, and never fails one: a lookup that goes
+	// wrong is only logged at debug level.
 	CheckForUpdates()
 }

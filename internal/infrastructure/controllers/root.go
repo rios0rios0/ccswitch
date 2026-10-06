@@ -113,11 +113,12 @@ func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.
 
 // checksForUpdates reports whether running cmd also checks for a newer release.
 //
-// The commands about the version itself skip it, as do cobra's help and shell
-// completion, and the two that the shell integration runs unattended: ensure,
-// before every claude launch and promised to stay off the network, and monitor,
-// whose daemon writes to a log file. A notice there would never be read, and the
-// check, done at most once a day, would be spent for nothing.
+// The commands about the version itself skip it, as does cobra's help, and so do
+// the ones whose notice nobody would read. ensure runs before every claude launch
+// and is promised to stay off the network. monitor's daemon would see its lookup
+// answer, marking the day as checked with the warning written only to its log.
+// Shell completion runs on every shell start and TAB press and exits at once, so
+// it would use up the day's few lookups without an answer.
 func checksForUpdates(cmd *cobra.Command) bool {
 	// `completion bash` is cobra's completion command, so it is judged by the
 	// command directly under the root.

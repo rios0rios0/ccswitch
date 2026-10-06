@@ -134,19 +134,23 @@ else branches on the OS; keep it that way.
   naming the same account — while the CLI counts positions from 1 for the primary (`Store.Position`,
   `entities.ParsePriority`). Reordering touches no credentials: the monitor reloads the store every
   tick and `selectTarget` compares `Order` values, which is also why they must never tie.
-- **The passive update check stays off the commands nobody watches.** cliforge looks for a newer
-  release at most once a day, and it marks the day as checked *before* its background lookup returns.
-  `ensure` runs before every `claude` launch and promises no network, `monitor` is the daemon whose
-  output only reaches its log file, and `completion` is typically sourced from a shell rc on every
-  start — a check from any of them would spend the day's only lookup where no notice is ever read.
-  `checksForUpdates` keeps them out, together with `version`, `self-update`, `help` and cobra's
-  `__complete`; it judges a command by its ancestor directly under the root, because `completion
-  bash` is named `bash`. Exempt any new command that the shell integration runs.
+- **The passive update check stays off the commands nobody watches.** cliforge counts a day as
+  checked only once a background lookup has answered, and starts at most five lookups a day, so a
+  command that exits before the answer arrives spends one of the five. `ensure` runs before every
+  `claude` launch and promises no network; `monitor` is the daemon, whose lookup would answer and
+  mark the day with the notice written only to its log file; `completion` is sourced from a shell rc
+  on every start and cobra's `__complete` runs on every TAB press, so either would use up the day's
+  lookups before a command anyone reads gets one. `checksForUpdates` keeps them out, together with
+  `version`, `self-update` and `help`; it judges a command by its ancestor directly under the root,
+  because `completion bash` is named `bash`. Exempt any new command that the shell integration runs.
 - **`self-update` cannot update a running daemon.** The daemon keeps running the binary it was
   started from, and `monitor --ensure-daemon` finds it alive and leaves it be, so after an install
   `self-update` names the daemon's pid for the user to stop. Whether a release went in is read off
   the binary — `os.SameFile` on the executable before and after — because cliforge reports success
-  the same way for an install, a dry run, an up-to-date binary and a declined prompt.
+  the same way for an install, a dry run, an up-to-date binary and a declined prompt. Take the
+  "before" identity through an open handle (`File.Stat`), never `os.Stat`: on Windows `os.Stat` reads
+  the identity only when `os.SameFile` compares it, by which time the new binary holds the path, so
+  every install would read as none and the daemon would never be named.
 
 ## Conventions
 

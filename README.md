@@ -20,7 +20,7 @@
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
 - **Cross-platform**: Linux, macOS, and Windows, on amd64 and arm64.
 - **Seamless shell integration**: an optional shell wrapper (a few lines shown below) keeps the daemon alive and ensures each `claude` launch uses the current account.
-- **Self-updating**: `ccswitch self-update` installs the latest release in place, and the commands you run by hand check for a newer release at most once a day.
+- **Self-updating**: `ccswitch self-update` installs the latest release in place, and the commands you run by hand tell you, at most once a day, when a newer release is out.
 
 ## How it works
 
@@ -103,9 +103,11 @@ ccswitch --version              # or `ccswitch version` for the bare number
 ```
 
 The commands you run by hand — `list`, `status`, `use` and the like — also look for a newer release in
-the background, at most once a day, and print a one-line notice if the answer arrives before they
-finish. The commands the [shell integration](#shell-integration) runs unattended never look: `ensure`
-stays off the network, and the `monitor` daemon's output only reaches its log file.
+the background and print a one-line notice if the answer arrives before they finish. A day counts as
+checked only once an answer has arrived, so a command that finishes first leaves the check to the next
+one, and no more than five lookups start in a day. The commands the
+[shell integration](#shell-integration) runs unattended never look: `ensure` stays off the network,
+and the `monitor` daemon's output only reaches its log file.
 
 A monitor daemon that is already running keeps running the binary it was started from, so after an
 update `self-update` names its process: stop it, and the next `ccswitch monitor --ensure-daemon`
@@ -137,10 +139,11 @@ as a live session would block every rotation for as long as the desktop app is o
 
 ### Windows notes
 
-`ccswitch` behaves the same on Windows, with two differences worth knowing:
+`ccswitch` behaves the same on Windows, with three differences worth knowing:
 
 - **Session detection recognizes `claude.exe` only.** The daemon never rewrites credentials while Claude Code is running, and it identifies a running session by the executable name. A natively installed Claude Code is detected; an npm installation runs the CLI inside `node.exe`, which is indistinguishable from any other Node process, so a session started that way is not seen and credentials may be swapped underneath it. Prefer the native install, or stop the daemon while a session is open.
 - **The store is not owner-only.** On Linux and macOS the account store and credentials are written with `0600`. Windows ignores those bits, so the files inherit the permissions of their parent directory (normally your user profile, which is already restricted to you).
+- **`self-update` leaves the previous binary behind until the next update.** Windows cannot delete the file of a program that is still running, and the replaced `ccswitch.exe` is still running the update itself (and perhaps a monitor daemon), so it is moved aside as `ccswitch.exe.backup-<number>` beside the new one. The next `self-update` removes it, or you can delete it yourself once no older `ccswitch` process is left.
 
 ## Usage
 
