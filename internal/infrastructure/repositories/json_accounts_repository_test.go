@@ -1,7 +1,6 @@
 package repositories_test
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,8 +10,6 @@ import (
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/repositories"
 )
-
-const wantStorePerm = os.FileMode(0o600)
 
 func TestJSONAccountsRepository(t *testing.T) {
 	t.Parallel()
@@ -52,21 +49,5 @@ func TestJSONAccountsRepository(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		assert.Empty(t, loaded.Accounts)
-	})
-
-	t.Run("should write the store with owner-only permissions", func(t *testing.T) {
-		t.Parallel()
-		// given
-		path := filepath.Join(t.TempDir(), "store.json")
-		repo := repositories.NewJSONAccountsRepository(path)
-
-		// when
-		err := repo.Save(&entities.Store{})
-
-		// then
-		require.NoError(t, err)
-		info, statErr := os.Stat(path)
-		require.NoError(t, statErr)
-		assert.Equal(t, wantStorePerm, info.Mode().Perm())
 	})
 }

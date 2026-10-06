@@ -75,6 +75,8 @@ Clean Architecture with a strict domain / infrastructure split:
   same matrix per pull request — skipping it is how `Setsid` (absent on Windows) reached delivery
   and left every release up to 0.2.2 with zero published binaries. Note that `make lint` only covers
   the host OS, so run it with `GOOS=darwin` / `GOOS=windows` after touching platform-specific code.
+  The workflow also runs every test on Windows (`tests > test:windows`); a test of something Windows
+  lacks, such as Unix mode bits, goes in a `_unix_test.go` file behind `//go:build !windows`.
 - **On macOS the keychain is the only credential store that matters, and writing it is a
   read-modify-write.** The generic-password item `Claude Code-credentials` wins whenever it is
   readable and `.credentials.json` is consulted only when the keychain returns nothing, so writing

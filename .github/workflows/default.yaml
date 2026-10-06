@@ -58,3 +58,25 @@ jobs:
         with:
           goos: '${{ matrix.goos }}'
           goarch: '${{ matrix.goarch }}'
+
+  # The shared pipeline runs the tests on Linux only, and the cross-compile job
+  # above only type-checks the other targets. Windows is where ccswitch behaves
+  # most differently — the ToolHelp32 session probe, process detachment and
+  # liveness, the self-update swap of a running .exe — and only a run there shows
+  # it. `go test` runs directly because the pipeline's test scripts are POSIX
+  # shell; the Linux job still owns coverage and the published reports.
+  tests-windows:
+    name: 'tests > test:windows'
+    runs-on: 'windows-latest'
+    timeout-minutes: 20
+    permissions:
+      contents: 'read'
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    steps:
+      - uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' # v7.0.1
+      - uses: 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e' # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+      - name: 'Run the tests'
+        run: 'go test -count=1 ./...'
