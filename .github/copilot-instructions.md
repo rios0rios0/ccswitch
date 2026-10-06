@@ -105,17 +105,20 @@ Clean Architecture with a strict domain / infrastructure split:
   still holds the pair the refresh consumed; that guard is what keeps it from overwriting a different
   account's credentials. It is used by `monitor`, `list` and `status` alike — every command that
   polls usage can spend the refresh token.
-- **The passive update check stays off the commands nobody watches.** cliforge looks for a newer
-  release at most once a day and marks the day as checked before its background lookup returns.
+- **The passive update check stays off the commands nobody watches.** cliforge counts a day as
+  checked only once a background lookup has answered, and starts at most five lookups a day.
   `ensure` (run before every `claude` launch, promised no network), `monitor` (the daemon, whose
-  output only reaches its log file) and `completion` (sourced from shell rc files) would spend that
-  lookup where no notice is read, so `checksForUpdates` exempts them along with `version`,
-  `self-update`, `help` and `__complete`, judging a command by its ancestor directly under the root.
+  answered lookup would mark the day with the notice only in its log file) and `completion` and
+  `__complete` (run on every shell start and TAB press) would use those lookups where no notice is
+  read, so `checksForUpdates` exempts them along with `version`, `self-update` and `help`, judging a
+  command by its ancestor directly under the root.
 - **`self-update` cannot update a running daemon.** The daemon keeps running the binary it started
   from and `--ensure-daemon` leaves a live one be, so after an install `self-update` names the
   daemon's pid for the user to stop. An install is detected with `os.SameFile` on the executable
   before and after, since cliforge reports success the same way for an install, a dry run, an
-  up-to-date binary and a declined prompt.
+  up-to-date binary and a declined prompt. The "before" side comes from `File.Stat` on an open
+  handle: on Windows `os.Stat` reads the identity only when it is compared, after the new binary has
+  taken the path, which would make every install read as none.
 
 ## Key external contracts
 

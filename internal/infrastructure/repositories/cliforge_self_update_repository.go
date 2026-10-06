@@ -14,8 +14,9 @@ import (
 type ReleaseUpdater interface {
 	// Execute installs the latest release over the running binary when it is newer.
 	Execute(dryRun, force bool) error
-	// CheckForUpdates warns, at most once a day and in the background, when a newer
-	// release is out.
+	// CheckForUpdates warns, in the background, when a newer release is out. It
+	// counts a day as checked once a lookup has answered, and starts no more than a
+	// few lookups a day.
 	CheckForUpdates()
 }
 
@@ -60,7 +61,7 @@ func (r *CliforgeSelfUpdateRepository) Update(dryRun, force bool) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	before, err := os.Stat(binary)
+	before, err := identityOf(binary)
 	if err != nil {
 		return false, fmt.Errorf("failed to inspect the running binary: %w", err)
 	}
@@ -71,11 +72,26 @@ func (r *CliforgeSelfUpdateRepository) Update(dryRun, force bool) (bool, error) 
 	return !stillAt(binary, before), nil
 }
 
-// CheckForUpdates warns when a newer release is out. cliforge looks at most once a
-// day, skips development builds and binaries modified today, and runs the lookup in
-// the background, so the command it accompanies is never held up.
+// CheckForUpdates warns when a newer release is out. cliforge runs the lookup in
+// the background, so the command it accompanies is never held up, and skips
+// development builds and binaries modified today. It counts a day as checked only
+// once a lookup has answered, starts at most five lookups a day, and skips the
+// lookup when it cannot keep that count.
 func (r *CliforgeSelfUpdateRepository) CheckForUpdates() {
 	r.updater.CheckForUpdates()
+}
+
+// identityOf captures the identity of the file at path through an open handle.
+// On Windows [os.Stat] only records the path and reads the file's identity when
+// [os.SameFile] compares it, by which time an update has put another file there,
+// so a snapshot taken that way would always match the new binary.
+func identityOf(path string) (os.FileInfo, error) {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	return file.Stat()
 }
 
 // stillAt reports whether the file at path is still the one before describes. A

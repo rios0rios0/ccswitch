@@ -1,8 +1,10 @@
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/rios0rios0/cliforge v0.4.6 h1:Ivq5EFcVnoo7scuEBV+OngYr6c8Cg0u/6VYJ9UjIGjA=
-github.com/rios0rios0/cliforge v0.4.6/go.mod h1:En4hkYOu7CAvHyGE7Skhh7dpg94g7oxgTugwzy+YEQo=
+github.com/rios0rios0/cliforge v0.4.7 h1:tpmfuIEXrwlRdIZ1/sUU7WKus9wQKTbNYxpiDjKOjRc=
+github.com/rios0rios0/cliforge v0.4.7/go.mod h1:JluEZnzn0qnygWUdINhpY3HhbZge4au5A3PwLLA/nF4=
+github.com/rios0rios0/testkit v0.3.4 h1:a8HOyvo1qeNIfo2rNbOJ3GfK/hRgcH3qXUu04ngS75o=
+github.com/rios0rios0/testkit v0.3.4/go.mod h1:VcnV5fCKFpKI7yT+qRhV1BW7hy2xA/GVZpArVXG4aH8=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/sirupsen/logrus v1.10.2 h1:G2SED73/qrAu6YwbdxOD6peLkCBI3z7L+ykJFTXJBBo=
 github.com/sirupsen/logrus v1.10.2/go.mod h1:SLEg8TqYulVKKfIGHldVp2K2aYz2DKSVBq4g/H5bR7Q=
