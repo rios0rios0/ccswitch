@@ -105,7 +105,9 @@ else branches on the OS; keep it that way.
 - **Six targets are released, so platform code must compile for all of them.** `make cross-compile`
   type-checks linux/darwin/windows × amd64/arm64, and the workflow runs the same matrix on every
   pull request. Skipping it is how `Setsid` — which does not exist on Windows — reached delivery and
-  left every release up to 0.2.2 with zero published binaries.
+  left every release up to 0.2.2 with zero published binaries. The workflow also runs the whole test
+  suite on Windows (`tests > test:windows`), so a test asserting something Windows does not have,
+  such as Unix mode bits, belongs in a `_unix_test.go` file behind `//go:build !windows`.
 - **On macOS the keychain is the only credential store that matters, and writing it is a
   read-modify-write.** Claude Code uses a `keychain-with-plaintext-fallback` store: the generic-password
   item `Claude Code-credentials` wins whenever it is readable, and `~/.claude/.credentials.json` is

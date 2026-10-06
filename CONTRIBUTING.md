@@ -44,3 +44,5 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 - OS-specific code belongs in a `_unix.go` / `_windows.go` pair behind a shared, portable function;
   nothing else may branch on the operating system. Binaries are released for Linux, macOS, and
   Windows on amd64 and arm64, and a Windows-only compile error breaks the entire release.
+- Every pull request also runs the whole test suite on Windows. A test of something Windows does
+  not have, such as Unix mode bits, goes in a `_unix_test.go` file behind `//go:build !windows`.
