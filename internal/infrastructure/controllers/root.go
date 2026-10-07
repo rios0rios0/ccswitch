@@ -79,11 +79,13 @@ func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
-	bindPersistentFlags(root, cfg)
+	color := colorAuto
+	bindPersistentFlags(root, cfg, &color)
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		// Whether --threshold was named decides who wins between the flag and the
 		// value `ccswitch threshold` persisted, so it has to be read after parsing.
 		cfg.ThresholdExplicit = cmd.Flags().Changed("threshold")
+		cfg.Output = outputStyle(color, os.Stdout)
 		if cfg.Verbose {
 			logger.SetLevel(logger.DebugLevel)
 		}
@@ -133,9 +135,11 @@ func checksForUpdates(cmd *cobra.Command) bool {
 }
 
 // bindPersistentFlags attaches the flags shared by all subcommands, writing into
-// the shared config which is read after cobra parses them.
-func bindPersistentFlags(root *cobra.Command, cfg *entities.Config) {
+// the shared config, and the color mode, which are read after cobra parses them.
+func bindPersistentFlags(root *cobra.Command, cfg *entities.Config, color *colorMode) {
 	flags := root.PersistentFlags()
+	flags.Var(color, colorFlag,
+		"when to color the account list: auto (on a terminal, unless NO_COLOR is set), always, or never")
 	flags.Float64Var(&cfg.Threshold, "threshold", cfg.Threshold,
 		"utilization percent (0-100) that triggers rotation; overrides the value stored by "+
 			"`ccswitch threshold` for this invocation only")

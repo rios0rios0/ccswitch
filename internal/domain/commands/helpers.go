@@ -28,7 +28,15 @@ const (
 	// readingLabelWidth fits the longest label readingLabel produces.
 	readingLabelWidth = 12
 	stateOK           = "ok"
+	stateExhausted    = "exhausted"
 )
+
+// availability is whether an account can be used: it can, or it is exhausted
+// until, when that is known, a given moment.
+type availability struct {
+	exhausted bool
+	recovers  time.Time
+}
 
 // pollUsage fetches usage for the given credentials, refreshing the access token
 // when needed. It returns the usage and the (possibly refreshed) credentials so
@@ -221,16 +229,12 @@ func printUsage(writer io.Writer, usage *entities.Usage, threshold float64, now 
 }
 
 // printReadings writes one line per utilization figure in the usage: its label,
-// its percentage, and when it resets. A figure the endpoint reported no reset time
-// for is printed without one, rather than with a reset reading "unknown".
-func printReadings(writer io.Writer, usage *entities.Usage, now time.Time) {
+// its percentage, and when it resets (see palette.readingLine). A figure the
+// endpoint reported no reset time for is printed without one, rather than with a
+// reset reading "unknown".
+func printReadings(writer io.Writer, usage *entities.Usage, now time.Time, threshold float64, look palette) {
 	for _, reading := range usage.Readings() {
-		line := fmt.Sprintf("%s%-*s %4.0f%%",
-			readingIndent, readingLabelWidth, readingLabel(reading.Kind), reading.Percent)
-		if !reading.ResetsAt.IsZero() {
-			line += "  " + describeReset(now, reading.ResetsAt)
-		}
-		fmt.Fprintln(writer, line)
+		fmt.Fprintln(writer, look.readingLine(reading, now, threshold))
 	}
 }
 
@@ -248,32 +252,23 @@ func readingLabel(kind string) string {
 	return kind
 }
 
-// usageState sums up what a live reading says about the account: "ok", or
-// exhausted together with when it is available again, which is when every limit
-// over the threshold has reset (see Usage.RecoversAt).
-func usageState(usage *entities.Usage, threshold float64, now time.Time) string {
+// usageAvailability reads what a live reading says about the account: available,
+// or exhausted until it is available again, which is when every limit over the
+// threshold has reset (see Usage.RecoversAt).
+func usageAvailability(usage *entities.Usage, threshold float64) availability {
 	if !usage.Exhausted(threshold) {
-		return stateOK
+		return availability{}
 	}
-	return exhaustedState(now, usage.RecoversAt(threshold))
+	return availability{exhausted: true, recovers: usage.RecoversAt(threshold)}
 }
 
-// markerState sums up the account from its exhaustion marker, for when no live
-// reading is at hand.
-func markerState(store *entities.Store, email string, now time.Time) string {
+// markerAvailability reads the account's availability off its exhaustion marker,
+// for when no live reading is at hand.
+func markerAvailability(store *entities.Store, email string, now time.Time) availability {
 	if !store.Rotation.IsExhausted(email, now) {
-		return stateOK
+		return availability{}
 	}
-	return exhaustedState(now, store.Rotation.ExhaustedUntil[email])
-}
-
-// exhaustedState phrases an exhausted account and, when known, when it is
-// available again.
-func exhaustedState(now, recovers time.Time) string {
-	if recovers.IsZero() {
-		return "exhausted"
-	}
-	return "exhausted, available again " + formatMoment(now, recovers)
+	return availability{exhausted: true, recovers: store.Rotation.ExhaustedUntil[email]}
 }
 
 // describeReset phrases when a limit resets: "resets in 2h 13m (Tue Sep 29
@@ -290,14 +285,22 @@ func describeReset(now, reset time.Time) string {
 // (Tue Sep 29 17:47)" ahead of now, "5m ago (Tue Sep 29 17:29)" behind it, or
 // "unknown" for the zero time.
 func formatMoment(now, moment time.Time) string {
-	if moment.IsZero() {
-		return "unknown"
-	}
-	when := moment.Local().Format(momentLayout)
+	return palette{}.moment(now, moment)
+}
+
+// countdown phrases how far a moment is from now: "in 2h 13m" ahead of it, "5m
+// ago" behind it.
+func countdown(now, moment time.Time) string {
 	if moment.After(now) {
-		return fmt.Sprintf("in %s (%s)", formatDuration(moment.Sub(now)), when)
+		return "in " + formatDuration(moment.Sub(now))
 	}
-	return fmt.Sprintf("%s ago (%s)", formatDuration(now.Sub(moment)), when)
+	return formatDuration(now.Sub(moment)) + " ago"
+}
+
+// localMoment renders a moment in local time, the date spelled out as well as the
+// weekday.
+func localMoment(moment time.Time) string {
+	return moment.Local().Format(momentLayout)
 }
 
 // formatDuration renders a duration at the precision a countdown needs: days and

@@ -4,8 +4,9 @@ import "time"
 
 // Config holds the resolved runtime configuration for ccswitch: filesystem
 // locations, the rotation threshold, the daemon poll interval, the OAuth
-// endpoints, and how much to log. It is assembled from defaults, environment, and
-// flags by the controllers layer and injected into commands.
+// endpoints, how much to log, and how richly to print. It is assembled from
+// defaults, environment, and flags by the controllers layer and injected into
+// commands.
 type Config struct {
 	// CredentialsPath is the Claude Code active-credentials file (~/.claude/.credentials.json).
 	CredentialsPath string
@@ -39,6 +40,10 @@ type Config struct {
 	// Verbose turns on debug logging. A monitor daemon started by an invocation
 	// that asked for it logs at debug level too.
 	Verbose bool
+	// Output is how richly the usage listing dresses up standard output: plain
+	// text for a pipe or a file, meters on a terminal, and colors there unless the
+	// user asked for none. The zero value is plain.
+	Output OutputStyle
 }
 
 // ResolveThreshold returns the rotation threshold to apply, preferring an

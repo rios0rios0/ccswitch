@@ -53,6 +53,10 @@ func (c *ListAccountsCommand) WithOutput(out io.Writer) *ListAccountsCommand {
 // prints every limit the usage endpoint reported, with its utilization and when it
 // resets. Listing polls usage, which refreshes any spent token, so the store is
 // saved whenever a poll produced new credentials.
+//
+// On a terminal the listing is dressed up as Config.Output says: a meter beside
+// every figure, colored by how close the figure stands to the threshold, the reset
+// times in columns, and exhausted accounts in red. Anywhere else it is plain text.
 func (c *ListAccountsCommand) Execute() error {
 	store, err := c.accounts.Load()
 	if err != nil {
@@ -65,13 +69,19 @@ func (c *ListAccountsCommand) Execute() error {
 
 	warnAPIKeyOverride()
 
+	look := c.palette()
 	threshold := c.config.ResolveThreshold(store.Settings)
-	fmt.Fprintf(c.out, "rotation threshold: %.0f%%\n", threshold)
+	fmt.Fprintln(c.out, "rotation threshold: "+look.paint(toneStrong, fmt.Sprintf("%.0f%%", threshold)))
 
 	now := c.now()
 	ordered := store.Ordered()
 	refreshed := false
 	for i := range ordered {
+		// The meters under each account would run into the next one's heading, so a
+		// decorated listing sets every account off with a blank line.
+		if look.style.Decorated() {
+			fmt.Fprintln(c.out)
+		}
 		if c.printAccount(i+1, &ordered[i], store, now, threshold) {
 			refreshed = true
 		}
@@ -91,14 +101,14 @@ func (c *ListAccountsCommand) printAccount(
 	now time.Time,
 	threshold float64,
 ) bool {
-	marker := " "
-	if account.Email == store.Rotation.CurrentEmail {
-		marker = "*"
-	}
-	heading := fmt.Sprintf("%s %d. %s", marker, position, account.Email)
+	look := c.palette()
+	active := account.Email == store.Rotation.CurrentEmail
 
 	if !account.SupportsUsagePolling() {
-		fmt.Fprintf(c.out, "%s [manual only] long-lived token; its usage cannot be polled\n", heading)
+		fmt.Fprintf(c.out, "%s [%s] %s\n",
+			look.heading(position, account.Email, active, toneStrong),
+			look.paint(toneManual, "manual only"),
+			look.paint(toneMuted, "long-lived token; its usage cannot be polled"))
 		return false
 	}
 
@@ -110,25 +120,48 @@ func (c *ListAccountsCommand) printAccount(
 	refreshed := captureRefreshed(c.credentials, store, account.Email, previous, creds)
 
 	if err != nil {
-		fmt.Fprintf(c.out, "%s [%s]\n", heading, markerState(store, account.Email, now))
-		c.printLastKnown(account, now)
+		c.printHeading(position, account.Email, active, markerAvailability(store, account.Email, now), now)
+		c.printLastKnown(account, now, threshold)
 		return refreshed
 	}
 
-	fmt.Fprintf(c.out, "%s [%s]\n", heading, usageState(usage, threshold, now))
-	printReadings(c.out, usage, now)
+	c.printHeading(position, account.Email, active, usageAvailability(usage, threshold), now)
+	printReadings(c.out, usage, now, threshold, look)
 	return refreshed
+}
+
+// printHeading prints the line an account's readings go under: its position, its
+// email, and whether it can be used, with the email in red when it cannot.
+func (c *ListAccountsCommand) printHeading(
+	position int,
+	email string,
+	active bool,
+	account availability,
+	now time.Time,
+) {
+	look := c.palette()
+	color := toneStrong
+	if account.exhausted {
+		color = toneExhausted
+	}
+	fmt.Fprintf(c.out, "%s [%s]\n", look.heading(position, email, active, color), look.state(account, now))
 }
 
 // printLastKnown stands in for a live reading that could not be taken, such as
 // when the usage endpoint is rate-limiting. The monitor records the usage every
 // successful poll sees, and the reset times in it are absolute, so they still
 // answer when each limit comes back even though the percentages may have moved.
-func (c *ListAccountsCommand) printLastKnown(account *entities.Account, now time.Time) {
+func (c *ListAccountsCommand) printLastKnown(account *entities.Account, now time.Time, threshold float64) {
+	look := c.palette()
 	if account.LastUsage == nil {
-		fmt.Fprintln(c.out, readingIndent+"usage unavailable")
+		fmt.Fprintln(c.out, readingIndent+look.paint(toneNearing, "usage unavailable"))
 		return
 	}
-	fmt.Fprintln(c.out, readingIndent+"usage unavailable; last known reading:")
-	printReadings(c.out, account.LastUsage, now)
+	fmt.Fprintln(c.out, readingIndent+look.paint(toneNearing, "usage unavailable; last known reading:"))
+	printReadings(c.out, account.LastUsage, now, threshold, look)
+}
+
+// palette dresses the listing up in the output style the configuration resolved.
+func (c *ListAccountsCommand) palette() palette {
+	return palette{style: c.config.Output}
 }

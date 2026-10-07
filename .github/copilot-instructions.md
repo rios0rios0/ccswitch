@@ -70,7 +70,8 @@ Clean Architecture with a strict domain / infrastructure split:
 - **Six targets are released, so platform code must compile for all of them.** OS-specific code
   lives in `_unix.go` / `_darwin.go` / `_windows.go` pairs (`detachAttrs`/`processAlive` in
   `services`, the session and credentials adapters in `repositories`,
-  `newSessionsRepository`/`newCredentialsRepository` in `controllers`); nothing else branches on the
+  `newSessionsRepository`/`newCredentialsRepository` and `consoleStyle`, which switches a Windows
+  console into virtual terminal processing for colors, in `controllers`); nothing else branches on the
   OS. `make cross-compile` type-checks linux/darwin/windows × amd64/arm64 and the workflow runs the
   same matrix per pull request — skipping it is how `Setsid` (absent on Windows) reached delivery
   and left every release up to 0.2.2 with zero published binaries. Note that `make lint` only covers
@@ -90,6 +91,14 @@ Clean Architecture with a strict domain / infrastructure split:
   `Claude.app/Contents/MacOS/Claude`, whose base name matches the CLI's under the case-insensitive
   `matchesClaudeProcess` compare, so `PSSessionsRepository` skips executables inside `.app` bundles.
   Counting it would hold `ClaudeRunning()` permanently true and silently disable rotation.
+- **Plain output never changes with the styling.** `list` decorates itself (meters, columns, colors)
+  only as `Config.Output` says; `PersistentPreRun` resolves it through `outputStyle`, in this order:
+  `--color`, `FORCE_COLOR` (forces; `0`/`false` drop), `NO_COLOR` (drops), `CLICOLOR_FORCE` (forces),
+  `CLICOLOR=0`/`TERM=dumb` (drop), then whether stdout is a character device — each variable ranked as
+  its own specification has it. The zero `palette` is the plain style and prints the pre-styling lines
+  byte for byte, because pipes and scripts read them. Pad before painting (`fmt` widths count escape
+  codes), color figures through `Reading.Spent` so a red figure is exactly one that exhausts an active
+  limit, and keep the decorated figure and meter rounding down, as Claude Code's `/usage` does.
 - **Long-lived tokens (`claude setup-token`) cannot be polled.** They are minted without the
   `user:profile` scope that `/api/oauth/usage` requires, so they return 403. Such accounts are
   flagged `LongLived` (and detected by an absent refresh token, which also covers stores written
@@ -143,7 +152,9 @@ make cross-compile  # go vet for all six released OS/arch targets
 ## Conventions
 
 - Logging uses Logrus aliased as `logger`; user-facing output goes to `os.Stdout`/`os.Stderr` with a
-  `[ccswitch]` prefix. Colors are not forced, because the daemon logs to a file. `-v`/`--verbose` and
+  `[ccswitch]` prefix. Log colors are not forced, because the daemon logs to a file. The colors of
+  `list` come from `palette` and keep to the sixteen theme colors plus faint, with bold on red only
+  (bold-as-bright terminals wash bright green, yellow and cyan out on light backgrounds). `-v`/`--verbose` and
   `DEBUG=true` turn on debug logging, and `daemonArgs` passes `--verbose` on to the daemon.
 - Tests live in external `_test` packages with `// given/when/then` blocks and carry no build tags.
   No mocking library — use `test/doubles`; HTTP adapters are tested against a real `httptest.NewServer`.
