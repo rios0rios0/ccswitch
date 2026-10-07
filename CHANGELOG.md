@@ -22,6 +22,35 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-07
+
+### Added
+
+- added `--priority` to `ccswitch enroll`, which places the account at that position in the rotation order instead of last
+- added `-v`/`--verbose` to turn on debug logging, which a monitor daemon started by `monitor --ensure-daemon -v` keeps too, and `--version` to print the labelled version beside the bare one `ccswitch version` prints
+- added `ccswitch remove <email>...` to remove accounts and their stored tokens from the store, removing none of them unless every named account is enrolled. Removing the active account hands over to the highest-priority remaining account with capacity and installs it at once, or on the next launch while a `claude` session is running
+- added `ccswitch self-update`, which installs the latest GitHub release in place of the running binary through the shared `cliforge` library, asking first unless `--force` is given, while `--dry-run` only shows what would be installed. When a monitor daemon is still running the replaced binary, it names the daemon's pid so it can be restarted onto the new version
+- added `ccswitch show <email>`, which prints one enrolled account in detail: its place in the rotation order, whether it has capacity, when each of its limits resets, its plan, when its tokens expire and when the monitor last polled it -- never the tokens themselves
+- added `ccswitch update <email> --priority <position>` and `ccswitch reorder <email>...` to change the rotation order, which was fixed at enrollment order before. A position is counted from 1 for the primary, or is one of `top`, `bottom`, `up` and `down`; `reorder` puts the named accounts first in the order given and keeps the rest behind them. Neither touches credentials: a running daemon applies the new order on its next poll
+- added a check for a newer release to the commands run by hand: it runs in the background and prints a one-line notice when its lookup finds one before the command ends. A day counts as checked only once a lookup has answered, so a command that ends first leaves the check to the next one, and no more than five lookups start in a day. `ensure` and `monitor` never run it, since the shell integration runs them unattended and nobody would read the notice, and neither do `completion`, which runs on every shell start, `help`, `version` and `self-update`
+- added a CI job that runs the whole test suite on Windows for every pull request, and limited the test of the store's owner-only permissions to the platforms that have them, the one test that failed there
+- added CLI integration coverage for account enrollment, inspection, priority changes, removal aliases and rejection of invalid requests without changing the stored accounts
+- added when each limit resets to `ccswitch list`: under every account it prints each limit the usage endpoint reports, with its utilization and a countdown to its reset, and an exhausted account says when it is available again. When the endpoint cannot be read for an account, the last reading the monitor recorded is shown instead
+- added Windows support to `install.sh`: run from Git Bash, MSYS2 or Cygwin, it downloads the `.zip` release, extracts it with `unzip` and installs `ccswitch.exe`
+
+### Changed
+
+- changed `ccswitch list` to number accounts from 1 for the primary, matching the positions `update` takes, and to print one line per limit under each account in place of the single `5h=`/`7d=`/`binding=` line
+- changed reset times in `ccswitch status` and in the monitor log to a countdown followed by the local date and time, e.g. `in 2h 13m (Tue Sep 29 17:47)`. The weekday alone was ambiguous for a weekly limit, which can reset a full week out on the weekday it is today
+- changed the shared `cliforge` library to 0.4.7, which makes `ccswitch self-update` work on Windows and counts a day's update check only once its lookup has answered
+
+### Fixed
+
+- fixed `ccswitch self-update` on Windows never naming a monitor daemon left running the binary it replaced: the identity of the replaced binary was only read once the new one had taken its place, so every install looked like none
+- fixed `install.sh --version` failing with a 404 for every release: it prefixed the version with a `v` that the release tags do not carry, so it now accepts `0.7.2` and `v0.7.2` alike
+- fixed `install.sh` ending in a 404 on 32-bit x86 and ARM machines, for a release asset that is never built: it now stops with a message that releases are published for amd64 and arm64 only
+- made the monitor replace a current account that is no longer enrolled the way `ccswitch remove` does -- with the highest-priority account that has capacity -- instead of with the first account in the rotation order, which could be a long-lived one that must only ever be selected by hand
+
 ## [0.7.2] - 2026-09-09
 
 ### Changed

@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added `-v`/`--verbose` to turn on debug logging, which a monitor daemon started by `monitor --ensure-daemon -v` keeps too, and `--version` to print the labelled version beside the bare one `ccswitch version` prints'
-time: '2026-10-05T18:24:03.093275515Z'

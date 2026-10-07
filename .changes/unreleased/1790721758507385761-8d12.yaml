@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added `ccswitch show <email>`, which prints one enrolled account in detail: its place in the rotation order, whether it has capacity, when each of its limits resets, its plan, when its tokens expire and when the monitor last polled it -- never the tokens themselves'
-time: '2026-09-29T22:42:38.507324771Z'

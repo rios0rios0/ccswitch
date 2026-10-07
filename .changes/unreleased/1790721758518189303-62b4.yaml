@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added `ccswitch update <email> --priority <position>` and `ccswitch reorder <email>...` to change the rotation order, which was fixed at enrollment order before. A position is counted from 1 for the primary, or is one of `top`, `bottom`, `up` and `down`; `reorder` puts the named accounts first in the order given and keeps the rest behind them. Neither touches credentials: a running daemon applies the new order on its next poll'
-time: '2026-09-29T22:42:38.518107636Z'

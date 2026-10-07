@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added `ccswitch self-update`, which installs the latest GitHub release in place of the running binary through the shared `cliforge` library, asking first unless `--force` is given, while `--dry-run` only shows what would be installed. When a monitor daemon is still running the replaced binary, it names the daemon''s pid so it can be restarted onto the new version'
-time: '2026-10-05T18:24:03.089345825Z'
