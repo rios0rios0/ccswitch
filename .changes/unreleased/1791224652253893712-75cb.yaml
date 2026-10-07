@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added a check for a newer release to the commands run by hand: it runs in the background and prints a one-line notice when its lookup finds one before the command ends. A day counts as checked only once a lookup has answered, so a command that ends first leaves the check to the next one, and no more than five lookups start in a day. `ensure` and `monitor` never run it, since the shell integration runs them unattended and nobody would read the notice, and neither do `completion`, which runs on every shell start, `help`, `version` and `self-update`'
-time: '2026-10-05T18:24:12.253825718Z'

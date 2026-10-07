@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added when each limit resets to `ccswitch list`: under every account it prints each limit the usage endpoint reports, with its utilization and a countdown to its reset, and an exhausted account says when it is available again. When the endpoint cannot be read for an account, the last reading the monitor recorded is shown instead'
-time: '2026-09-29T22:42:38.558038105Z'

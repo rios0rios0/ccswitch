@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'changed `ccswitch list` to number accounts from 1 for the primary, matching the positions `update` takes, and to print one line per limit under each account in place of the single `5h=`/`7d=`/`binding=` line'
-time: '2026-09-29T22:42:38.573347011Z'

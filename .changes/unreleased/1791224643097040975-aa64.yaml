@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'fixed `install.sh --version` failing with a 404 for every release: it prefixed the version with a `v` that the release tags do not carry, so it now accepts `0.7.2` and `v0.7.2` alike'
-time: '2026-10-05T18:24:03.096981332Z'

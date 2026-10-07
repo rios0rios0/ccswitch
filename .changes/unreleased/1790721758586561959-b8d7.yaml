@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'changed reset times in `ccswitch status` and in the monitor log to a countdown followed by the local date and time, e.g. `in 2h 13m (Tue Sep 29 17:47)`. The weekday alone was ambiguous for a weekly limit, which can reset a full week out on the weekday it is today'
-time: '2026-09-29T22:42:38.586491542Z'

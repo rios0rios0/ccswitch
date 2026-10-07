@@ -1,3 +1,0 @@
-kind: 'Fixed'
-body: 'fixed `ccswitch self-update` on Windows never naming a monitor daemon left running the binary it replaced: the identity of the replaced binary was only read once the new one had taken its place, so every install looked like none'
-time: '2026-10-06T00:35:59.279321828Z'
