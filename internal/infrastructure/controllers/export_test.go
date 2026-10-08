@@ -17,3 +17,9 @@ func NewRootCommandWithUpdates(version string, updates domain.SelfUpdateReposito
 func DaemonArgs(cfg *entities.Config) []string {
 	return daemonArgs(cfg)
 }
+
+// ResolveOutputStyle decides how richly to dress up output for the given --color
+// mode, environment, and whether the output is a terminal.
+func ResolveOutputStyle(mode string, env map[string]string, terminal bool) entities.OutputStyle {
+	return resolveOutputStyle(colorMode(mode), func(name string) string { return env[name] }, terminal)
+}

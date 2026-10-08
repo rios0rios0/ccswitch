@@ -258,3 +258,31 @@ func TestUsageReadings(t *testing.T) {
 			readings[1])
 	})
 }
+
+func TestReadingSpent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should report spent when the figure reaches the threshold", func(t *testing.T) {
+		t.Parallel()
+		// given
+		reading := entities.Reading{Kind: entities.LimitKindSession, Percent: thresholdPct}
+
+		// when
+		result := reading.Spent(thresholdPct)
+
+		// then
+		assert.True(t, result, "a figure at the threshold exhausts an active limit, so it is spent")
+	})
+
+	t.Run("should report not spent when the figure is below the threshold", func(t *testing.T) {
+		t.Parallel()
+		// given
+		reading := entities.Reading{Kind: entities.LimitKindWeeklyAll, Percent: sessionPct}
+
+		// when
+		result := reading.Spent(thresholdPct)
+
+		// then
+		assert.False(t, result)
+	})
+}

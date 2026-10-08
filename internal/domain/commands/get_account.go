@@ -78,9 +78,10 @@ func (c *GetAccountCommand) Execute(email string) error {
 		fmt.Fprintf(os.Stderr, "[ccswitch] could not fetch usage for %s: %v\n", email, pollErr)
 	}
 
-	c.printSummary(store, account, usage, now)
+	threshold := c.config.ResolveThreshold(store.Settings)
+	c.printSummary(store, account, usage, now, threshold)
 	c.printCredentials(account, now)
-	c.printUsage(account, usage, now)
+	c.printUsage(account, usage, now, threshold)
 
 	if !refreshed {
 		return nil
@@ -96,6 +97,7 @@ func (c *GetAccountCommand) printSummary(
 	account *entities.Account,
 	usage *entities.Usage,
 	now time.Time,
+	threshold float64,
 ) {
 	heading := account.Email
 	if account.Email == store.Rotation.CurrentEmail {
@@ -105,12 +107,12 @@ func (c *GetAccountCommand) printSummary(
 	fmt.Fprintf(c.out, "  priority:       %s\n",
 		describePosition(store.Position(account.Email), len(store.Accounts)))
 
-	state := markerState(store, account.Email, now)
+	state := palette{}.state(markerAvailability(store, account.Email, now), now)
 	switch {
 	case !account.SupportsUsagePolling():
 		state = "manual only (long-lived token; its usage cannot be polled, so select it with `ccswitch use`)"
 	case usage != nil:
-		state = usageState(usage, c.config.ResolveThreshold(store.Settings), now)
+		state = palette{}.state(usageAvailability(usage, threshold), now)
 	}
 	fmt.Fprintf(c.out, "  state:          %s\n", state)
 }
@@ -136,7 +138,12 @@ func (c *GetAccountCommand) printCredentials(account *entities.Account, now time
 // printUsage prints when the monitor last polled the account and every limit the
 // live reading reported, falling back to the last reading the monitor recorded
 // when no live one could be taken.
-func (c *GetAccountCommand) printUsage(account *entities.Account, usage *entities.Usage, now time.Time) {
+func (c *GetAccountCommand) printUsage(
+	account *entities.Account,
+	usage *entities.Usage,
+	now time.Time,
+	threshold float64,
+) {
 	if !account.SupportsUsagePolling() {
 		return
 	}
@@ -150,10 +157,10 @@ func (c *GetAccountCommand) printUsage(account *entities.Account, usage *entitie
 	switch {
 	case usage != nil:
 		fmt.Fprintln(c.out, "  usage:")
-		printReadings(c.out, usage, now)
+		printReadings(c.out, usage, now, threshold, palette{})
 	case account.LastUsage != nil:
 		fmt.Fprintln(c.out, "  usage:          unavailable; last known reading:")
-		printReadings(c.out, account.LastUsage, now)
+		printReadings(c.out, account.LastUsage, now, threshold, palette{})
 	default:
 		fmt.Fprintln(c.out, "  usage:          unavailable")
 	}

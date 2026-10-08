@@ -13,7 +13,16 @@ const (
 	lowPct       = 20.0
 	sessionPct   = 56.0
 	weeklyPct    = 93.0
-	longRecovery = 72 * time.Hour
+	// nearingPct sits past 80% of thresholdPct but short of it, where a figure is
+	// shown as closing in on the threshold.
+	nearingPct = 75.0
+	// overflowPct is a figure past the limit it measures.
+	overflowPct = 120.0
+	// justUnderThresholdPct rounds to thresholdPct without reaching it.
+	justUnderThresholdPct = 89.6
+	// almostFullPct rounds to a full 100% without being at the limit.
+	almostFullPct = 99.7
+	longRecovery  = 72 * time.Hour
 	// The reset offsets below sit well clear of the unit boundary below them, so
 	// the countdown a test expects holds however long the test takes to get there.
 	sessionResetIn    = 2*time.Hour + 13*time.Minute + 30*time.Second
@@ -21,6 +30,9 @@ const (
 	recoveryIn        = 31*time.Minute + 30*time.Second
 	wholeHoursResetIn = 4*time.Hour + 30*time.Second
 	imminentResetIn   = 40 * time.Second
+	// staleFor is how long ago a reading's limit reset, for a reading kept from
+	// before that reset.
+	staleFor = 12*time.Minute + 30*time.Second
 	// farFuture is an expiry no test run will reach, so a token carrying it is
 	// refreshed only when something other than its age forces it.
 	farFuture = int64(1) << 62

@@ -74,6 +74,13 @@ func (u Usage) Readings() []Reading {
 	return readings
 }
 
+// Spent reports whether the figure has reached the given threshold, by the same
+// test that decides when an active limit exhausts its account, so a figure shown
+// as spent is one that would rotate the account away.
+func (r Reading) Spent(thresholdPercent float64) bool {
+	return percentSpent(r.Percent, thresholdPercent)
+}
+
 // windowReading reports one rolling window, falling back to the limit of the same
 // kind when the endpoint did not fill the window in.
 func (u Usage) windowReading(kind string, window Window) Reading {
@@ -108,7 +115,12 @@ func (u Usage) Exhausted(thresholdPercent float64) bool {
 // honouring it independently capped every threshold at the point the warning
 // fires and made 99 behave exactly like 90.
 func limitSpent(limit Limit, thresholdPercent float64) bool {
-	return limit.Percent >= thresholdPercent
+	return percentSpent(limit.Percent, thresholdPercent)
+}
+
+// percentSpent is the test limitSpent applies, shared with Reading.Spent.
+func percentSpent(percent, thresholdPercent float64) bool {
+	return percent >= thresholdPercent
 }
 
 // BindingLimit returns the active limit with the highest utilization and whether

@@ -1,0 +1,3 @@
+kind: 'Added'
+body: 'added colors and usage meters to `ccswitch list` on a terminal: every limit gets a bar beside its percentage, green while it is well clear of the rotation threshold, yellow from 80% of it and red once it reaches it; the reset countdowns and dates line up in columns of their own; and exhausted accounts are shown in red. `--color auto|always|never` and the `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` environment variables decide when to color, Windows consoles are switched into virtual terminal mode to render the colors, and output that is piped or redirected stays the plain text it was'
+time: '2026-10-07T19:03:31.759481816Z'

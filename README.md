@@ -16,6 +16,7 @@
 - **Automatic rotation**: when the active account crosses a utilization threshold (default 99%), it swaps in the next account that still has capacity. Retune it at any time with `ccswitch threshold <percent>` — a running daemon picks the new value up without a restart.
 - **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
 - **Account management**: list, inspect, reprioritize, reorder and remove enrolled accounts from the command line; `ccswitch list` shows when every limit of every account resets.
+- **Usage at a glance**: on a terminal, `ccswitch list` draws a meter beside every limit, green while the limit is well clear of the rotation threshold, yellow as it closes in and red once it reaches it, lines the reset times up in columns, and shows exhausted accounts in red.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
 - **Cross-platform**: Linux, macOS, and Windows, on amd64 and arm64.
@@ -174,7 +175,26 @@ Every enrolled account has a place in the rotation order, and `ccswitch list` nu
 the primary. Under each account it prints every limit the usage endpoint reports, its utilization, and
 when it resets — as a countdown and as a local time, with the date spelled out because a weekly limit
 can reset a full week out, on today's weekday. An exhausted account also says when it is available
-again, which is when every limit over the threshold has reset:
+again, which is when every limit over the threshold has reset. On a terminal it looks like this, in
+[color](#colors):
+
+```text
+rotation threshold: 99%
+
+* 1. primary@example.com [ok]
+     5-hour       ███████████▏░░░░░░░░  56%  resets in 2h 13m   Tue Sep 29 17:47
+     7-day        ████████▏░░░░░░░░░░░  41%  resets in 4d 2h    Sat Oct 3 17:50
+     7-day scoped ██▍░░░░░░░░░░░░░░░░░  12%  resets in 4d 2h    Sat Oct 3 17:50
+
+  2. backup@example.com [exhausted, available again in 31m (Tue Sep 29 16:05)]
+     5-hour       ████████████████████ 100%  resets in 31m      Tue Sep 29 16:05
+     7-day        ████████████░░░░░░░░  60%  resets in 5d 23h   Mon Oct 5 15:10
+
+  3. manual@example.com [manual only] long-lived token; its usage cannot be polled
+```
+
+Piped or redirected, `list` prints the same listing as plain text, without meters or escape codes, which
+is the form a script should read:
 
 ```text
 rotation threshold: 99%
@@ -223,6 +243,39 @@ never handed over to automatically; when only those remain, pick one with `ccswi
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
 | `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file. Ignored on macOS, where the login keychain is used instead. |
 | `-v`, `--verbose` | `false`                              | Enable debug logging. A daemon started by `monitor --ensure-daemon -v` logs at debug level too. `DEBUG=true` in the environment does the same. |
+| `--color`        | `auto`                                | When to color `ccswitch list`: `auto` colors a terminal unless the environment says otherwise, `always` colors a pipe too, and `never` colors nothing. See [Colors](#colors). |
+
+### Colors
+
+On a terminal, `ccswitch list` colors every limit by how close it stands to the rotation threshold:
+green below 80% of the threshold, yellow from there, and red once it reaches the threshold, the point
+at which an active limit rotates its account away. The same color fills the limit's meter, 20 cells of
+5% each, filled in eighths of a cell. Figures and meters round down, as Claude Code's own usage screen
+does, so a figure never reads as the threshold before it turns red, and only a limit that is used up
+fills its meter. Exhausted accounts are red, reset countdowns cyan, the `*` on the account Claude Code
+runs on green, and manual-only accounts magenta. Dates, positions and the empty part of each meter are
+faint.
+
+The first of these that applies decides whether there are colors:
+
+1. `--color always` or `--color never`. `always` colors a pipe as well, for a pager that renders them,
+   such as `less -R`; `never` still draws the meters on a terminal.
+2. `FORCE_COLOR`, which forces colors when set to anything but `0` or `false`, which turn them off.
+3. [`NO_COLOR`](https://no-color.org/) set to any non-empty value, which turns them off and keeps the
+   meters.
+4. `CLICOLOR_FORCE` set to anything but `0`, which forces colors.
+5. `CLICOLOR=0` or `TERM=dumb`, which turn them off and keep the meters.
+6. Otherwise, colors when the output is a terminal.
+
+Each variable ranks the way its own specification has it. `FORCE_COLOR` outranks `NO_COLOR`, as in the
+reference code of [force-color.org](https://force-color.org/) and in Node.js, since it is usually set for
+the one command it comes with while `NO_COLOR` is a standing preference. `CLICOLOR_FORCE` yields to
+`NO_COLOR`, as [its specification](https://bixense.com/clicolors/) says.
+
+Output that is not a terminal and not forced into color is the plain text shown under
+[Managing accounts](#managing-accounts). On Windows, ccswitch switches the console into virtual terminal
+mode to render the colors; a console that cannot be switched, older than Windows 10, shows the meters
+without them.
 
 ### Long-lived tokens
 
@@ -279,7 +332,8 @@ ccswitch/
 Anything the operating system does differently lives in a `_unix.go` / `_darwin.go` / `_windows.go`
 pair: process detachment and liveness in `services`, the credentials swapper and session detection
 in `repositories` (credentials file versus login keychain; `/proc` scan, process table, or ToolHelp32
-snapshot), and the choice between them in `controllers`. Everything else is portable.
+snapshot), and the choice between them in `controllers`, together with switching a Windows console into
+virtual terminal mode so it renders colors. Everything else is portable.
 
 ## Development
 
