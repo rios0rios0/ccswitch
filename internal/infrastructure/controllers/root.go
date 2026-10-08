@@ -139,7 +139,7 @@ func checksForUpdates(cmd *cobra.Command) bool {
 func bindPersistentFlags(root *cobra.Command, cfg *entities.Config, color *colorMode) {
 	flags := root.PersistentFlags()
 	flags.Var(color, colorFlag,
-		"when to color the account list: auto (on a terminal, unless NO_COLOR is set), always, or never")
+		"when to color list and show: auto (on a terminal, unless NO_COLOR is set), always, or never")
 	// pflag shows the first back-quoted word of a usage as the name of the flag's
 	// value, so back-quotes in a usage name the value and nothing else.
 	flags.Float64Var(&cfg.Threshold, "threshold", cfg.Threshold,

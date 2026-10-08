@@ -16,7 +16,7 @@
 - **Automatic rotation**: when the active account crosses a utilization threshold (default 99%), it swaps in the next account that still has capacity. Retune it at any time with `ccswitch threshold <percent>` — a running daemon picks the new value up without a restart.
 - **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
 - **Account management**: list, inspect, reprioritize, reorder and remove enrolled accounts from the command line; `ccswitch list` shows when every limit of every account resets.
-- **Usage at a glance**: on a terminal, `ccswitch list` draws a meter beside every limit, green while the limit is well clear of the rotation threshold, yellow as it closes in and red once it reaches it, lines the reset times up in columns, and shows exhausted accounts in red.
+- **Usage at a glance**: on a terminal, `ccswitch list` and `ccswitch show` draw a meter beside every limit, green while the limit is well clear of the rotation threshold, yellow as it closes in and red once it reaches it, line the reset times up in columns, and show exhausted accounts in red.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
 - **Session-safe**: never rewrites credentials while a `claude` process is running; the switch is applied on the next launch.
 - **Cross-platform**: Linux, macOS, and Windows, on amd64 and arm64.
@@ -210,8 +210,8 @@ rotation threshold: 99%
 
 When the usage endpoint cannot be read for an account — it rate-limits — `list` falls back to the last
 reading the monitor recorded for it, whose reset times still hold. `ccswitch show <email>` prints the
-same for one account together with its plan, when its tokens expire, and when the monitor last polled
-it. Neither ever prints a token.
+same for one account, with the same meters and colors on a terminal, together with its plan, when its
+tokens expire, and when the monitor last polled it. Neither ever prints a token.
 
 A priority is a position counted from 1 for the primary, or one of `top`, `bottom`, `up` and `down`:
 
@@ -243,18 +243,19 @@ never handed over to automatically; when only those remain, pick one with `ccswi
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
 | `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file. Ignored on macOS, where the login keychain is used instead. |
 | `-v`, `--verbose` | `false`                              | Enable debug logging. A daemon started by `monitor --ensure-daemon -v` logs at debug level too. `DEBUG=true` in the environment does the same. |
-| `--color`        | `auto`                                | When to color `ccswitch list`: `auto` colors a terminal unless the environment says otherwise, `always` colors a pipe too, and `never` colors nothing. See [Colors](#colors). |
+| `--color`        | `auto`                                | When to color `ccswitch list` and `ccswitch show`: `auto` colors a terminal unless the environment says otherwise, `always` colors a pipe too, and `never` colors nothing. See [Colors](#colors). |
 
 ### Colors
 
-On a terminal, `ccswitch list` colors every limit by how close it stands to the rotation threshold:
-green below 80% of the threshold, yellow from there, and red once it reaches the threshold, the point
-at which an active limit rotates its account away. The same color fills the limit's meter, 20 cells of
-5% each, filled in eighths of a cell. Figures and meters round down, as Claude Code's own usage screen
-does, so a figure never reads as the threshold before it turns red, and only a limit that is used up
-fills its meter. Exhausted accounts are red, reset countdowns cyan, the `*` on the account Claude Code
-runs on green, and manual-only accounts magenta. Dates, positions and the empty part of each meter are
-faint.
+On a terminal, `ccswitch list` and `ccswitch show` color every limit by how close it stands to the
+rotation threshold: green below 80% of the threshold, yellow from there, and red once it reaches the
+threshold, the point at which an active limit rotates its account away. The same color fills the limit's
+meter, 20 cells of 5% each, filled in eighths of a cell. Figures and meters round down, as Claude Code's
+own usage screen does, so a figure never reads as the threshold before it turns red, and only a limit
+that is used up fills its meter. Exhausted accounts are red, countdowns cyan, the mark on the account
+Claude Code runs on (`*` in `list`, `(active)` in `show`) green, and manual-only accounts magenta.
+Warnings are yellow: usage that could not be read, and credentials Claude Code would discard. Dates,
+positions and the empty part of each meter are faint.
 
 The first of these that applies decides whether there are colors:
 
