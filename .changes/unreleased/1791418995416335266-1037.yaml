@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'fixed the help of `--threshold`, which showed `ccswitch threshold` as the name of its value instead of `percent` and pushed the description of every flag to the right'
+time: '2026-10-08T00:23:15.416283423Z'
