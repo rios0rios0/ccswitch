@@ -126,6 +126,25 @@ func TestRootCommandVersion(t *testing.T) {
 	})
 }
 
+func TestRootCommandHelp(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should name the value of --threshold a percent in the help", func(t *testing.T) {
+		t.Parallel()
+		// given
+		var out bytes.Buffer
+		path := filepath.Join(t.TempDir(), "store.json")
+
+		// when
+		err := executeCLIWith(path, &doubles.StubSelfUpdateRepository{}, &out, io.Discard, "--help")
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "--threshold percent ")
+		assert.NotContains(t, out.String(), "`")
+	})
+}
+
 // TestRootCommandVerbose is deliberately not parallel: the log level it asserts on
 // is process-wide, so it is restored afterwards and must not change underneath
 // other tests while they run.

@@ -140,9 +140,11 @@ func bindPersistentFlags(root *cobra.Command, cfg *entities.Config, color *color
 	flags := root.PersistentFlags()
 	flags.Var(color, colorFlag,
 		"when to color the account list: auto (on a terminal, unless NO_COLOR is set), always, or never")
+	// pflag shows the first back-quoted word of a usage as the name of the flag's
+	// value, so back-quotes in a usage name the value and nothing else.
 	flags.Float64Var(&cfg.Threshold, "threshold", cfg.Threshold,
-		"utilization percent (0-100) that triggers rotation; overrides the value stored by "+
-			"`ccswitch threshold` for this invocation only")
+		"utilization `percent` (0-100) that triggers rotation; overrides the value stored by "+
+			"the threshold command for this invocation only")
 	flags.DurationVar(&cfg.Interval, "interval", cfg.Interval, "monitor poll interval")
 	flags.BoolVar(&cfg.PreferPrimary, "prefer-primary", cfg.PreferPrimary,
 		"always run on the highest-priority account that has capacity, returning to it "+
