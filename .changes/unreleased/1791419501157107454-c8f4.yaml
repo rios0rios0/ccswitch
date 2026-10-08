@@ -1,0 +1,3 @@
+kind: 'Added'
+body: 'added the meters and colors of `ccswitch list` to `ccswitch show` on a terminal: the usage lines get the same bars, colors and columns, an exhausted account is red, the `(active)` mark green, countdowns cyan, and the credentials warning and unreadable usage yellow; output that is piped or redirected stays the plain text it was'
+time: '2026-10-08T00:31:41.156948001Z'

@@ -127,14 +127,14 @@ Nothing else branches on the OS; keep it that way.
   case-insensitive compare. Counting it would make `ClaudeRunning()` permanently true and silently
   disable rotation for anyone who keeps the desktop app open, so `PSSessionsRepository` skips
   executables inside `.app` bundles.
-- **Plain output is what pipes and scripts read, so it never changes with the styling.** `list`
-  dresses itself up only as `Config.Output` says, which `PersistentPreRun` resolves through
+- **Plain output is what pipes and scripts read, so it never changes with the styling.** `list` and
+  `show` dress themselves up only as `Config.Output` says, which `PersistentPreRun` resolves through
   `outputStyle`: `--color` first, then `FORCE_COLOR` (forces, or drops colors at `0`/`false`), then
   `NO_COLOR` (drops), then `CLICOLOR_FORCE` (forces), then `CLICOLOR=0` and `TERM=dumb` (drop), then
   whether stdout is a character device. That order is each variable's own specification:
   force-color.org and Node.js rank `FORCE_COLOR` over `NO_COLOR`, and bixense ranks `NO_COLOR` over
   `CLICOLOR_FORCE`. Rendering goes through `palette`, whose zero value is the plain style: `paint`
-  returns text untouched and `readingLine` prints the pre-styling line, so an undecorated listing stays
+  returns text untouched and `readingLine` prints the pre-styling line, so undecorated output stays
   byte-for-byte what it was. Pad text before painting it, since `fmt` widths count the escape codes, and
   color a figure through `Reading.Spent`, the same test that exhausts an active limit, never a second
   copy of it. The decorated figure and meter round down, as Claude Code's `/usage` does, so a figure
@@ -171,11 +171,11 @@ Nothing else branches on the OS; keep it that way.
 
 - All persistence is atomic (temp file + rename) and owner-only (0600).
 - Logrus is imported aliased as `logger`; user-facing text goes to stdout/stderr with a `[ccswitch]`
-  prefix. Colors in log lines are left to logrus, which uses them on a terminal only: the daemon logs to
-  a file, so `ForceColors` would fill it with escape codes. The colors of `list` come from `palette`
-  and keep to the sixteen theme colors plus bold and faint: never "bright black", which Solarized Dark
-  paints in the background color, and bold only on red, since Windows Terminal and xterm show bold as
-  bright by default, which washes green, yellow and cyan out on a light background.
+  prefix. Colors in log lines are left to logrus, which uses them on a terminal only: the daemon logs
+  to a file, so `ForceColors` would fill it with escape codes. The colors of `list` and `show` come
+  from `palette` and keep to the sixteen theme colors plus bold and faint: never "bright black", which
+  Solarized Dark paints in the background color, and bold only on red, since Windows Terminal and
+  xterm show bold as bright by default, which washes green, yellow and cyan out on a light background.
   `-v`/`--verbose` and `DEBUG=true` turn on debug logging, and `daemonArgs` passes `--verbose` on to a
   daemon started by an invocation that named it.
 - Tests live in external `_test` packages, structure bodies with `// given` / `// when` / `// then`

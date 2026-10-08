@@ -154,10 +154,10 @@ func (c *ListAccountsCommand) printHeading(
 func (c *ListAccountsCommand) printLastKnown(account *entities.Account, now time.Time, threshold float64) {
 	look := c.palette()
 	if account.LastUsage == nil {
-		fmt.Fprintln(c.out, readingIndent+look.paint(toneNearing, "usage unavailable"))
+		fmt.Fprintln(c.out, readingIndent+look.paint(toneCaution, "usage unavailable"))
 		return
 	}
-	fmt.Fprintln(c.out, readingIndent+look.paint(toneNearing, "usage unavailable; last known reading:"))
+	fmt.Fprintln(c.out, readingIndent+look.paint(toneCaution, "usage unavailable; last known reading:"))
 	printReadings(c.out, account.LastUsage, now, threshold, look)
 }
 

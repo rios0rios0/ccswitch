@@ -23,14 +23,18 @@ const (
 	// toneHealthy marks a figure well clear of the threshold, and an account that
 	// has capacity: green.
 	toneHealthy tone = "32"
-	// toneNearing marks a figure closing in on the threshold, and a reading so old
-	// that its limit has reset since: yellow.
+	// toneNearing marks a figure closing in on the threshold: yellow.
 	toneNearing tone = "33"
+	// toneCaution marks what calls for a second look: usage that could not be
+	// read, a reading so old that its limit has reset since, and credentials that
+	// Claude Code would discard: yellow.
+	toneCaution tone = "33"
 	// toneSpent marks a figure that has reached the threshold: red.
 	toneSpent tone = "31"
 	// toneExhausted marks an exhausted account, its email and its state: bold red.
 	toneExhausted tone = "1;31"
-	// toneTime marks how long until something resets: cyan.
+	// toneTime marks how far a moment stands from now, such as how long until a
+	// limit resets or a token expires: cyan.
 	toneTime tone = "36"
 	// toneManual marks an account that only a person can select: magenta.
 	toneManual tone = "35"
@@ -169,7 +173,7 @@ func (p palette) meter(percent float64, color tone) string {
 func (p palette) reset(now, moment time.Time) string {
 	verb, color := "resets", toneTime
 	if !moment.After(now) {
-		verb, color = "reset", toneNearing
+		verb, color = "reset", toneCaution
 	}
 	phrase := countdown(now, moment)
 	padding := strings.Repeat(" ", max(resetColumnWidth-len(verb+" "+phrase), 0))

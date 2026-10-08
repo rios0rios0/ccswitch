@@ -52,6 +52,11 @@ func (c *GetAccountCommand) WithOutput(out io.Writer) *GetAccountCommand {
 // the rotation order, whether it has capacity and when each of its limits resets,
 // its plan, and when its tokens expire. Reading its usage can refresh a spent
 // token, so the store is saved whenever the poll produced new credentials.
+//
+// On a terminal the account is dressed up as Config.Output says, the way list
+// dresses up every account: a meter beside every figure, colored by how close the
+// figure stands to the threshold, the reset times in columns, its state in color,
+// and its email in red when it is exhausted. Anywhere else it is plain text.
 func (c *GetAccountCommand) Execute(email string) error {
 	store, err := c.accounts.Load()
 	if err != nil {
@@ -90,8 +95,9 @@ func (c *GetAccountCommand) Execute(email string) error {
 }
 
 // printSummary prints the account's heading, its place in the rotation order, and
-// whether it has capacity. The state comes from the live reading when there is
-// one, and from the exhaustion marker the monitor keeps otherwise.
+// whether it has capacity, with the email in red when it has none. The state comes
+// from the live reading when there is one, and from the exhaustion marker the
+// monitor keeps otherwise.
 func (c *GetAccountCommand) printSummary(
 	store *entities.Store,
 	account *entities.Account,
@@ -99,21 +105,28 @@ func (c *GetAccountCommand) printSummary(
 	now time.Time,
 	threshold float64,
 ) {
-	heading := account.Email
+	look := c.palette()
+	available := markerAvailability(store, account.Email, now)
+	if usage != nil {
+		available = usageAvailability(usage, threshold)
+	}
+
+	color, state := toneStrong, look.state(available, now)
+	switch {
+	case !account.SupportsUsagePolling():
+		state = look.paint(toneManual, "manual only") + " " + look.paint(toneMuted,
+			"(long-lived token; its usage cannot be polled, so select it with `ccswitch use`)")
+	case available.exhausted:
+		color = toneExhausted
+	}
+
+	heading := look.paint(color, account.Email)
 	if account.Email == store.Rotation.CurrentEmail {
-		heading += " (active)"
+		heading += " " + look.paint(toneActive, "(active)")
 	}
 	fmt.Fprintln(c.out, heading)
 	fmt.Fprintf(c.out, "  priority:       %s\n",
 		describePosition(store.Position(account.Email), len(store.Accounts)))
-
-	state := palette{}.state(markerAvailability(store, account.Email, now), now)
-	switch {
-	case !account.SupportsUsagePolling():
-		state = "manual only (long-lived token; its usage cannot be polled, so select it with `ccswitch use`)"
-	case usage != nil:
-		state = palette{}.state(usageAvailability(usage, threshold), now)
-	}
 	fmt.Fprintf(c.out, "  state:          %s\n", state)
 }
 
@@ -121,17 +134,19 @@ func (c *GetAccountCommand) printSummary(
 // never the tokens themselves: its plan, when its tokens expire, and whether the
 // credentials have lost the scope Claude Code insists on.
 func (c *GetAccountCommand) printCredentials(account *entities.Account, now time.Time) {
+	look := c.palette()
 	creds := account.Credentials
 	if plan := describePlan(creds); plan != "" {
 		fmt.Fprintf(c.out, "  plan:           %s\n", plan)
 	}
-	fmt.Fprintf(c.out, "  access token:   %s\n", describeExpiry(now, creds.ExpiresAt))
+	fmt.Fprintf(c.out, "  access token:   %s\n", describeExpiry(now, creds.ExpiresAt, look))
 	if creds.RefreshTokenExpiresAt != 0 {
-		fmt.Fprintf(c.out, "  refresh token:  %s\n", describeExpiry(now, creds.RefreshTokenExpiresAt))
+		fmt.Fprintf(c.out, "  refresh token:  %s\n", describeExpiry(now, creds.RefreshTokenExpiresAt, look))
 	}
 	if creds.Degraded() {
-		fmt.Fprintf(c.out, "  warning:        the credentials lack the %q scope, so Claude Code will discard "+
-			"them; log in again with `claude` and re-enroll\n", entities.ScopeInference)
+		fmt.Fprintf(c.out, "  warning:        %s\n", look.paint(toneCaution, fmt.Sprintf(
+			"the credentials lack the %q scope, so Claude Code will discard them; "+
+				"log in again with `claude` and re-enroll", entities.ScopeInference)))
 	}
 }
 
@@ -148,22 +163,28 @@ func (c *GetAccountCommand) printUsage(
 		return
 	}
 
+	look := c.palette()
 	polled := "never by the monitor"
 	if !account.LastPolledAt.IsZero() {
-		polled = formatMoment(now, account.LastPolledAt) + " by the monitor"
+		polled = look.moment(now, account.LastPolledAt) + " by the monitor"
 	}
 	fmt.Fprintf(c.out, "  last polled:    %s\n", polled)
 
 	switch {
 	case usage != nil:
 		fmt.Fprintln(c.out, "  usage:")
-		printReadings(c.out, usage, now, threshold, palette{})
+		printReadings(c.out, usage, now, threshold, look)
 	case account.LastUsage != nil:
-		fmt.Fprintln(c.out, "  usage:          unavailable; last known reading:")
-		printReadings(c.out, account.LastUsage, now, threshold, palette{})
+		fmt.Fprintln(c.out, "  usage:          "+look.paint(toneCaution, "unavailable; last known reading:"))
+		printReadings(c.out, account.LastUsage, now, threshold, look)
 	default:
-		fmt.Fprintln(c.out, "  usage:          unavailable")
+		fmt.Fprintln(c.out, "  usage:          "+look.paint(toneCaution, "unavailable"))
 	}
+}
+
+// palette dresses the account up in the output style the configuration resolved.
+func (c *GetAccountCommand) palette() palette {
+	return palette{style: c.config.Output}
 }
 
 // describePosition phrases a place in the rotation order, naming the primary.
@@ -187,14 +208,15 @@ func describePlan(creds entities.OAuthCredentials) string {
 }
 
 // describeExpiry phrases when a token expires, given its expiry in epoch
-// milliseconds as the credentials store it.
-func describeExpiry(now time.Time, expiresAtMillis int64) string {
+// milliseconds as the credentials store it, with the moment in the palette's
+// tones.
+func describeExpiry(now time.Time, expiresAtMillis int64, look palette) string {
 	if expiresAtMillis == 0 {
 		return "no expiry recorded"
 	}
 	expires := time.UnixMilli(expiresAtMillis)
 	if expires.After(now) {
-		return "expires " + formatMoment(now, expires)
+		return "expires " + look.moment(now, expires)
 	}
-	return "expired " + formatMoment(now, expires)
+	return "expired " + look.moment(now, expires)
 }
