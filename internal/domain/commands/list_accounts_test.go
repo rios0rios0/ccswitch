@@ -350,8 +350,9 @@ func TestListAccountsDressesUpATerminal(t *testing.T) {
 
 			// then
 			require.NoError(t, err)
-			assert.True(t, strings.HasPrefix(out, "rotation threshold: 90%\n\n* 1. a@example.com [ok]\n"),
-				"a decorated listing sets every account off with a blank line")
+			assert.True(t, strings.HasPrefix(out, "rotation threshold: 90%\n\n✻ Claude\n* 1. a@example.com [ok]\n"),
+				"a decorated listing names the provider above its first account and sets every account "+
+					"off with a blank line")
 			assert.Contains(t, out,
 				"     5-hour       ███████████▏░░░░░░░░  56%  resets in 2h 13m   "+momentIn(sessionReset)+"\n")
 			assert.Contains(t, out,

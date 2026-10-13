@@ -37,6 +37,16 @@ type Config struct {
 	TokenURL string
 	// ClientID is the Claude Code public OAuth client identifier used for refresh.
 	ClientID string
+	// CodexHome is the Codex CLI's home directory (~/.codex, or CODEX_HOME), whose
+	// auth.json holds the ChatGPT sign-in Codex runs as.
+	CodexHome string
+	// CodexUsageBaseURL is the base URL of the ChatGPT backend that reports the limits
+	// of a Codex account.
+	CodexUsageBaseURL string
+	// CodexTokenURL is the OAuth token endpoint used to refresh Codex's access tokens.
+	CodexTokenURL string
+	// CodexClientID is the Codex CLI's public OAuth client identifier used for refresh.
+	CodexClientID string
 	// Verbose turns on debug logging. A monitor daemon started by an invocation
 	// that asked for it logs at debug level too.
 	Verbose bool

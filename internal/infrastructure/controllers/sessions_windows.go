@@ -7,7 +7,8 @@ import (
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/repositories"
 )
 
-// newSessionsRepository returns the session detector for this platform.
-func newSessionsRepository() domain.SessionsRepository {
-	return repositories.NewToolhelpSessionsRepository()
+// newSessionsRepository returns the detector of the sessions of the CLI that runs
+// as command, for this platform.
+func newSessionsRepository(command string) domain.SessionsRepository {
+	return repositories.NewToolhelpSessionsRepository(command)
 }

@@ -86,7 +86,7 @@ func (r *FileCredentialsRepository) Write(
 	if err != nil {
 		return fmt.Errorf("failed to marshal credentials: %w", err)
 	}
-	if err = atomicWrite(r.credentialsPath, data, filePerm); err != nil {
+	if err = atomicWrite(r.credentialsPath, data); err != nil {
 		return fmt.Errorf("failed to write credentials file: %w", err)
 	}
 

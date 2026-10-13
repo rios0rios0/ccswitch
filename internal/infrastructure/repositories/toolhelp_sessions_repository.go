@@ -8,28 +8,32 @@ import (
 	"unsafe"
 )
 
-// ToolhelpSessionsRepository detects running Claude Code sessions by walking the
-// Windows process list. Windows has no /proc, so the ToolHelp32 snapshot API
+// ToolhelpSessionsRepository detects the running sessions of one CLI by walking
+// the Windows process list. Windows has no /proc, so the ToolHelp32 snapshot API
 // takes its place; it is available on every supported Windows version and needs
 // no elevated rights to enumerate process names.
 //
-// Only a natively installed Claude Code (claude.exe) is recognized. An npm
-// installation runs the CLI inside node.exe, and the snapshot carries executable
-// names but no command lines, so such a session is invisible here — matching
-// node.exe instead would suppress rotation for every Node process on the machine.
+// Only a CLI running as its own executable (claude.exe, codex.exe) is recognized.
+// An npm installation of Claude Code runs the CLI inside node.exe, and the
+// snapshot carries executable names but no command lines, so such a session is
+// invisible here — matching node.exe instead would suppress rotation for every
+// Node process on the machine. Codex's npm package starts its native codex.exe,
+// which is seen.
 type ToolhelpSessionsRepository struct {
+	command string
 	selfPID int
 }
 
 // NewToolhelpSessionsRepository creates a repository that enumerates processes
-// through a ToolHelp32 snapshot.
-func NewToolhelpSessionsRepository() *ToolhelpSessionsRepository {
-	return &ToolhelpSessionsRepository{selfPID: os.Getpid()}
+// through a ToolHelp32 snapshot, looking for the CLI that runs as command, such
+// as "claude" or "codex".
+func NewToolhelpSessionsRepository(command string) *ToolhelpSessionsRepository {
+	return &ToolhelpSessionsRepository{command: command, selfPID: os.Getpid()}
 }
 
-// ClaudeRunning reports whether any process other than this one is running the
-// Claude Code executable.
-func (r *ToolhelpSessionsRepository) ClaudeRunning() bool {
+// Running reports whether any process other than this one is running the
+// executable of the CLI.
+func (r *ToolhelpSessionsRepository) Running() bool {
 	snapshot, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return false
@@ -43,7 +47,7 @@ func (r *ToolhelpSessionsRepository) ClaudeRunning() bool {
 		if int(entry.ProcessID) == r.selfPID {
 			continue
 		}
-		if matchesClaudeProcess(syscall.UTF16ToString(entry.ExeFile[:])) {
+		if matchesProcess(syscall.UTF16ToString(entry.ExeFile[:]), r.command) {
 			return true
 		}
 	}

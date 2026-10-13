@@ -36,10 +36,14 @@ func (a Account) SupportsUsagePolling() bool {
 	return !a.LongLived && a.Credentials.RefreshToken != ""
 }
 
-// Store is the persisted ccswitch state: the enrolled accounts, the rotation
-// state that tracks the active account and exhaustion windows, and the settings
-// that can be changed while the daemon runs.
+// Store is the persisted ccswitch state of one provider: the enrolled accounts, the
+// rotation state that tracks the active account and exhaustion windows, and the
+// settings that can be changed while the daemon runs, which every provider shares.
 type Store struct {
+	// Provider is the coding assistant every account in the store signs in to. It is
+	// not persisted: each provider's accounts are kept in a store of their own, and the
+	// repository that loads one says whose it is. The zero value is Claude.
+	Provider Provider      `json:"-"`
 	Accounts []Account     `json:"accounts"`
 	Rotation RotationState `json:"rotation"`
 	Settings Settings      `json:"settings,omitzero"`

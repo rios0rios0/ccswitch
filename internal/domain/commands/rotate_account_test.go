@@ -19,7 +19,7 @@ func TestRotateAccountCommandExecute(t *testing.T) {
 		// given
 		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{}
-		sessions := &doubles.StubSessionsRepository{Running: false}
+		sessions := &doubles.StubSessionsRepository{Active: false}
 		command := commands.NewRotateAccountCommand(accounts, credentials, sessions)
 
 		// when
@@ -36,7 +36,7 @@ func TestRotateAccountCommandExecute(t *testing.T) {
 		// given
 		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{}
-		sessions := &doubles.StubSessionsRepository{Running: true}
+		sessions := &doubles.StubSessionsRepository{Active: true}
 		command := commands.NewRotateAccountCommand(accounts, credentials, sessions)
 
 		// when

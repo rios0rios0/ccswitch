@@ -5,7 +5,7 @@ description: "Review pull requests and diffs in ccswitch — the Go daemon that 
 
 # Code review — `ccswitch`
 
-`ccswitch` monitors Claude Code usage and swaps the `claudeAiOauth` block of the credential store when the active account is exhausted. It reads and rewrites live credentials on Linux, macOS, and Windows — the invariants below exist because breaking one destroys a user's tokens.
+`ccswitch` monitors Claude Code usage and swaps the `claudeAiOauth` block of the credential store when the active account is exhausted, and does the same for the ChatGPT sign-ins of the Codex CLI in `~/.codex/auth.json`. It reads and rewrites live credentials on Linux, macOS, and Windows — the invariants below exist because breaking one destroys a user's tokens.
 
 ## When to use this skill
 
@@ -82,6 +82,10 @@ them before the generic ones.
 - **The Claude desktop app is not a Claude Code session.** Session detection must not count it; check `ProcSessionsRepository`, `PSSessionsRepository`, and `ToolhelpSessionsRepository` stay consistent about what counts.
 - **The passive update check stays off unattended commands.** cliforge counts a day as checked once a background lookup has answered and starts at most five lookups a day, so a check from `ensure` (promised no network), `monitor` (its answered lookup marks the day while the notice only reaches the daemon log) or `completion`/`__complete` (run on every shell start and TAB press) uses them up where nobody reads the notice. A new command the shell integration runs must be added to `checksForUpdates`.
 - **An install is detected by file identity, captured through a handle.** `CliforgeSelfUpdateRepository.Update` compares the executable before and after with `os.SameFile`, and the "before" side must come from `File.Stat` on an open file. `os.Stat` on Windows defers reading the identity until the comparison, when the new binary already holds the path, so every install reads as none and the stale-daemon notice never prints.
+- **Providers never share a pool or a file.** Claude and Codex accounts rotate only among their own, and every provider but Claude keeps its accounts in a store file of its own (`store.codex.json`, through `JSONAccountsRepository.ForProvider`). A change that adds a provider's accounts as a new key of `store.json` lets a stale daemon running the previous binary erase them on its next tick. **Critical.**
+- **The scope repair is Claude's alone.** Commands must decide it through `store.Provider.Degraded(creds)`. Calling `creds.Degraded()` on a Codex sign-in, which names no Claude scope, refreshes it on every poll.
+- **Codex's `auth.json` is a read-modify-write that keeps the ID token.** Codex cannot load a sign-in without its ID token, so a write without one, a refresh merge that drops it, or a write over an API-key sign-in (`ErrCodexNotChatGPT`) signs the user out of Codex or undoes a deliberate choice. **Critical.**
+- **Claude's wording and plain output stay byte-for-byte.** Provider-specific text goes through `entities.Provider`; plain `list`/`status`/`show` output names providers only once a non-Claude account exists. A change that alters what a Claude-only store prints breaks the scripts that read it.
 - User-facing output goes to `os.Stdout`/`os.Stderr` with a `[ccswitch]` prefix; diagnostics go through Logrus aliased as `logger`. Do not mix the two.
 
 ### Commands a reviewer should be able to quote

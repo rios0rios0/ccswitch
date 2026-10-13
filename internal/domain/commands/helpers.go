@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"unicode/utf8"
 
 	logger "github.com/sirupsen/logrus"
 
@@ -16,8 +17,6 @@ import (
 )
 
 const (
-	envAPIKey    = "ANTHROPIC_API_KEY"    //nolint:gosec // env var name, not a secret
-	envAuthToken = "ANTHROPIC_AUTH_TOKEN" //nolint:gosec // env var name, not a secret
 	// momentLayout spells out the date as well as the weekday: a weekly limit can
 	// reset a full week out, on the weekday it is today.
 	momentLayout = "Mon Jan 2 15:04"
@@ -25,8 +24,12 @@ const (
 	// readingIndent lines a reading up under the email of the account it belongs
 	// to, past the "* 1. " marker and position that start the account's line.
 	readingIndent = "     "
-	// readingLabelWidth fits the longest label readingLabel produces.
+	// readingLabelWidth fits the longest label readingLabel produces for a Claude
+	// limit, and is the narrowest the label column of a listing gets.
 	readingLabelWidth = 12
+	// summaryLabelWidth lines the figures of `status` up after a label and its colon:
+	// "5-hour:  " and "7-day:   ".
+	summaryLabelWidth = 9
 	stateOK           = "ok"
 	stateExhausted    = "exhausted"
 )
@@ -49,9 +52,13 @@ type availability struct {
 // timestamp alone is not enough to tell a live token from a dead one. Without the
 // second attempt an account whose token was invalidated early stays unreadable
 // until it is enrolled again.
+//
+// The credentials belong to an account of the given provider, whose scope invariant
+// decides whether they need repairing (see entities.Provider.Degraded).
 func pollUsage(
 	usageRepo repositories.UsageRepository,
 	tokensRepo repositories.TokensRepository,
+	provider entities.Provider,
 	creds *entities.OAuthCredentials,
 	nowMillis int64,
 ) (*entities.Usage, entities.OAuthCredentials, error) {
@@ -62,7 +69,7 @@ func pollUsage(
 	// is the repair path for accounts an earlier ccswitch stripped, and leaving
 	// them alone until the token ages out means the next rotation still installs a
 	// credential document Claude Code will not keep.
-	if (current.AccessTokenExpired(nowMillis) || current.Degraded()) && canRefresh {
+	if (current.AccessTokenExpired(nowMillis) || provider.Degraded(current)) && canRefresh {
 		refreshed, err := tokensRepo.Refresh(current)
 		if err != nil {
 			return nil, current, fmt.Errorf("failed to refresh access token: %w", err)
@@ -146,9 +153,9 @@ func publishRefreshed(
 }
 
 // apiKeyOverride reports whether an environment variable is set that would cause
-// Claude Code to bypass the rotated OAuth credentials, and its name.
-func apiKeyOverride() (string, bool) {
-	for _, name := range []string{envAPIKey, envAuthToken} {
+// the provider's CLI to bypass the rotated OAuth credentials, and its name.
+func apiKeyOverride(provider entities.Provider) (string, bool) {
+	for _, name := range provider.OverrideVariables() {
 		if os.Getenv(name) != "" {
 			return name, true
 		}
@@ -157,11 +164,10 @@ func apiKeyOverride() (string, bool) {
 }
 
 // warnAPIKeyOverride prints a warning to stderr when an API-key environment
-// variable would shadow OAuth credentials.
-func warnAPIKeyOverride() {
-	if name, ok := apiKeyOverride(); ok {
-		fmt.Fprintf(os.Stderr,
-			"[ccswitch] WARN: %s is set; Claude Code will ignore rotated OAuth credentials\n", name)
+// variable would shadow the provider's OAuth credentials.
+func warnAPIKeyOverride(provider entities.Provider) {
+	if name, ok := apiKeyOverride(provider); ok {
+		fmt.Fprintf(os.Stderr, "[ccswitch] WARN: %s is set; %s\n", name, provider.OverrideNote())
 	}
 }
 
@@ -211,15 +217,22 @@ func captureRefreshed(
 	return true
 }
 
-// printUsage renders a compact usage summary to the writer.
+// printUsage renders a compact usage summary to the writer: the 5-hour and 7-day
+// windows, or for a usage reported as limits only (see entities.Usage.LimitsOnly)
+// each active limit in their place, then the limit that runs out first and whether
+// the account is exhausted.
 func printUsage(writer io.Writer, usage *entities.Usage, threshold float64, now time.Time) {
-	fmt.Fprintf(writer, "  5-hour:  %3.0f%%, resets %s\n",
-		usage.FiveHour.Utilization, formatMoment(now, usage.FiveHour.ResetsAt))
-	fmt.Fprintf(writer, "  7-day:   %3.0f%%, resets %s\n",
-		usage.SevenDay.Utilization, formatMoment(now, usage.SevenDay.ResetsAt))
+	if usage.LimitsOnly {
+		printActiveLimits(writer, usage, now)
+	} else {
+		fmt.Fprintf(writer, "  5-hour:  %3.0f%%, resets %s\n",
+			usage.FiveHour.Utilization, formatMoment(now, usage.FiveHour.ResetsAt))
+		fmt.Fprintf(writer, "  7-day:   %3.0f%%, resets %s\n",
+			usage.SevenDay.Utilization, formatMoment(now, usage.SevenDay.ResetsAt))
+	}
 	if binding, ok := usage.BindingLimit(); ok {
-		fmt.Fprintf(writer, "  binding: %s %.0f%% (%s), resets %s\n",
-			binding.Kind, binding.Percent, binding.Severity, formatMoment(now, binding.ResetsAt))
+		fmt.Fprintf(writer, "  binding: %s %.0f%%%s, resets %s\n",
+			binding.Kind, binding.Percent, describeSeverity(binding.Severity), formatMoment(now, binding.ResetsAt))
 	}
 	if usage.Exhausted(threshold) {
 		fmt.Fprintln(writer, "  status:  EXHAUSTED")
@@ -228,13 +241,43 @@ func printUsage(writer io.Writer, usage *entities.Usage, threshold float64, now 
 	}
 }
 
+// printActiveLimits writes one summary line per active limit, laid out like the
+// 5-hour and 7-day lines it stands in for: "  30-day:  100%, resets in 29d 18h (...)".
+func printActiveLimits(writer io.Writer, usage *entities.Usage, now time.Time) {
+	for _, limit := range usage.Limits {
+		if !limit.IsActive {
+			continue
+		}
+		fmt.Fprintf(writer, "  %-*s%3.0f%%, resets %s\n",
+			summaryLabelWidth, readingLabel(limit.Kind)+":", limit.Percent, formatMoment(now, limit.ResetsAt))
+	}
+}
+
+// describeSeverity phrases the display band the endpoint reported for a limit, " (critical)",
+// or nothing for an endpoint that reports none, as Codex's does.
+func describeSeverity(severity string) string {
+	if severity == "" {
+		return ""
+	}
+	return " (" + severity + ")"
+}
+
 // printReadings writes one line per utilization figure in the usage: its label,
 // its percentage, and when it resets (see palette.readingLine). A figure the
 // endpoint reported no reset time for is printed without one, rather than with a
 // reset reading "unknown".
+//
+// The labels take a column at least readingLabelWidth wide, widened to the longest
+// label among the readings, so a limit named for a model, as Codex names some, still
+// leaves the figures lined up. Claude's labels all fit the narrowest column.
 func printReadings(writer io.Writer, usage *entities.Usage, now time.Time, threshold float64, look palette) {
-	for _, reading := range usage.Readings() {
-		fmt.Fprintln(writer, look.readingLine(reading, now, threshold))
+	readings := usage.Readings()
+	width := readingLabelWidth
+	for _, reading := range readings {
+		width = max(width, utf8.RuneCountInString(readingLabel(reading.Kind)))
+	}
+	for _, reading := range readings {
+		fmt.Fprintln(writer, look.readingLine(reading, now, threshold, width))
 	}
 }
 

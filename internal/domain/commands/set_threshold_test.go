@@ -133,7 +133,7 @@ func TestSetThresholdCommandExecute(t *testing.T) {
 			"b": healthyUsage(),
 		})
 		command := newCommand(monitorConfig(), accounts, credentials, usage,
-			&doubles.StubSessionsRepository{Running: true})
+			&doubles.StubSessionsRepository{Active: true})
 
 		// when
 		err := command.Execute(borderlinePct - 1)

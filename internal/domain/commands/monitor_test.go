@@ -24,7 +24,7 @@ func TestMonitorCommandTick(t *testing.T) {
 			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra", Scopes: loginScopes()},
 		}
 		usage := exhaustedPrimaryUsage()
-		sessions := &doubles.StubSessionsRepository{Running: false}
+		sessions := &doubles.StubSessionsRepository{Active: false}
 		command := commands.NewMonitorCommand(monitorConfig(), accounts, credentials, usage, nil, sessions)
 
 		// when
@@ -82,7 +82,7 @@ func TestMonitorCommandTick(t *testing.T) {
 			Creds: &entities.OAuthCredentials{AccessToken: "a", RefreshToken: "ra", Scopes: loginScopes()},
 		}
 		usage := exhaustedPrimaryUsage()
-		sessions := &doubles.StubSessionsRepository{Running: true}
+		sessions := &doubles.StubSessionsRepository{Active: true}
 		command := commands.NewMonitorCommand(monitorConfig(), accounts, credentials, usage, nil, sessions)
 
 		// when
@@ -316,7 +316,7 @@ func TestMonitorCommandTick(t *testing.T) {
 		}
 		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
 		command := commands.NewMonitorCommand(monitorConfig(), accounts, credentials, usage, tokens,
-			&doubles.StubSessionsRepository{Running: true})
+			&doubles.StubSessionsRepository{Active: true})
 
 		// when
 		err := command.Tick(time.Now())
@@ -694,7 +694,7 @@ func TestMonitorCommandTick(t *testing.T) {
 			"b": healthyUsage(),
 		})
 		command := commands.NewMonitorCommand(monitorConfig(), accounts, credentials, usage, nil,
-			&doubles.StubSessionsRepository{Running: true})
+			&doubles.StubSessionsRepository{Active: true})
 
 		// when
 		err := command.Tick(time.Now())

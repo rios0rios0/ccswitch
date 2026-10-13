@@ -48,15 +48,18 @@ func (c *GetAccountCommand) WithOutput(out io.Writer) *GetAccountCommand {
 	return c
 }
 
-// Execute prints the account enrolled under the given email: where it stands in
-// the rotation order, whether it has capacity and when each of its limits resets,
-// its plan, and when its tokens expire. Reading its usage can refresh a spent
-// token, so the store is saved whenever the poll produced new credentials.
+// Execute prints the account enrolled under the given email: which provider it
+// signs in to, where it stands in the rotation order, whether it has capacity and
+// when each of its limits resets, its plan, and when its tokens expire. Reading its
+// usage can refresh a spent token, so the store is saved whenever the poll produced
+// new credentials.
 //
 // On a terminal the account is dressed up as Config.Output says, the way list
-// dresses up every account: a meter beside every figure, colored by how close the
-// figure stands to the threshold, the reset times in columns, its state in color,
-// and its email in red when it is exhausted. Anywhere else it is plain text.
+// dresses up every account: its provider's logo and name in its brand color, a meter
+// beside every figure, colored by how close the figure stands to the threshold, the
+// reset times in columns, its state in color, and its email in red when it is
+// exhausted. Anywhere else it is plain text, which names the provider of an account
+// that is not Claude's, so that a Claude account prints what it always has.
 func (c *GetAccountCommand) Execute(email string) error {
 	store, err := c.accounts.Load()
 	if err != nil {
@@ -74,7 +77,7 @@ func (c *GetAccountCommand) Execute(email string) error {
 	if account.SupportsUsagePolling() {
 		previous := account.Credentials
 		var creds entities.OAuthCredentials
-		usage, creds, pollErr = pollUsage(c.usage, c.tokens, &account.Credentials, now.UnixMilli())
+		usage, creds, pollErr = pollUsage(c.usage, c.tokens, store.Provider, &account.Credentials, now.UnixMilli())
 		// Capture before handling the error: a refresh that already succeeded rotated
 		// the token server-side and cannot be undone.
 		refreshed = captureRefreshed(c.credentials, store, email, previous, creds)
@@ -85,7 +88,7 @@ func (c *GetAccountCommand) Execute(email string) error {
 
 	threshold := c.config.ResolveThreshold(store.Settings)
 	c.printSummary(store, account, usage, now, threshold)
-	c.printCredentials(account, now)
+	c.printCredentials(store.Provider, account, now)
 	c.printUsage(account, usage, now, threshold)
 
 	if !refreshed {
@@ -125,15 +128,18 @@ func (c *GetAccountCommand) printSummary(
 		heading += " " + look.paint(toneActive, "(active)")
 	}
 	fmt.Fprintln(c.out, heading)
+	if look.style.Decorated() || store.Provider.Resolved() != entities.ProviderClaude {
+		fmt.Fprintf(c.out, "  provider:       %s\n", look.providerName(store.Provider))
+	}
 	fmt.Fprintf(c.out, "  priority:       %s\n",
 		describePosition(store.Position(account.Email), len(store.Accounts)))
 	fmt.Fprintf(c.out, "  state:          %s\n", state)
 }
 
-// printCredentials prints what the stored credentials say about the account,
-// never the tokens themselves: its plan, when its tokens expire, and whether the
-// credentials have lost the scope Claude Code insists on.
-func (c *GetAccountCommand) printCredentials(account *entities.Account, now time.Time) {
+// printCredentials prints what the stored credentials say about the account of the
+// provider, never the tokens themselves: its plan, when its tokens expire, and
+// whether the credentials have lost the scope Claude Code insists on.
+func (c *GetAccountCommand) printCredentials(provider entities.Provider, account *entities.Account, now time.Time) {
 	look := c.palette()
 	creds := account.Credentials
 	if plan := describePlan(creds); plan != "" {
@@ -143,7 +149,7 @@ func (c *GetAccountCommand) printCredentials(account *entities.Account, now time
 	if creds.RefreshTokenExpiresAt != 0 {
 		fmt.Fprintf(c.out, "  refresh token:  %s\n", describeExpiry(now, creds.RefreshTokenExpiresAt, look))
 	}
-	if creds.Degraded() {
+	if provider.Degraded(creds) {
 		fmt.Fprintf(c.out, "  warning:        %s\n", look.paint(toneCaution, fmt.Sprintf(
 			"the credentials lack the %q scope, so Claude Code will discard them; "+
 				"log in again with `claude` and re-enroll", entities.ScopeInference)))

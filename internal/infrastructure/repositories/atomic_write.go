@@ -15,8 +15,9 @@ const (
 
 // atomicWrite writes data to path via a temporary file in the same directory
 // followed by a rename, so a reader never observes a partially written file. The
-// parent directory is created when missing.
-func atomicWrite(path string, data []byte, perm os.FileMode) error {
+// file is owner-only, as everything ccswitch persists holds tokens, and the parent
+// directory is created when missing.
+func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return fmt.Errorf("failed to create directory %q: %w", dir, err)
@@ -29,7 +30,7 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 
-	if err = tmp.Chmod(perm); err != nil {
+	if err = tmp.Chmod(filePerm); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("failed to set temp file mode: %w", err)
 	}

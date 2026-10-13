@@ -43,6 +43,7 @@ func executeCLIWith(
 		"--store", storePath,
 		"--credentials", filepath.Join(filepath.Dir(storePath), "credentials.json"),
 		"--claude-json", filepath.Join(filepath.Dir(storePath), "claude.json"),
+		"--codex-home", filepath.Join(filepath.Dir(storePath), "codex"),
 	}, args...))
 	return root.Execute()
 }

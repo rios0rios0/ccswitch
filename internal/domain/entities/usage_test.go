@@ -259,6 +259,94 @@ func TestUsageReadings(t *testing.T) {
 	})
 }
 
+func TestUsageReadingsOfLimitsOnly(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should list the limits alone, without a 5-hour or 7-day window the endpoint never reported",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: a free Codex plan, whose single window is 30 days long
+			reset := time.Now().Truncate(time.Second)
+			usage := entities.Usage{LimitsOnly: true, Limits: []entities.Limit{
+				{Kind: "30-day", Percent: scopedPct, IsActive: true, ResetsAt: reset},
+			}}
+
+			// when
+			readings := usage.Readings()
+
+			// then
+			assert.Equal(t, []entities.Reading{{Kind: "30-day", Percent: scopedPct, ResetsAt: reset}}, readings)
+		})
+
+	t.Run("should list every limit in the order reported, active or not", func(t *testing.T) {
+		t.Parallel()
+		// given: a paid Codex plan with a limit on one model besides its two windows
+		reset := time.Now().Truncate(time.Second)
+		usage := entities.Usage{LimitsOnly: true, Limits: []entities.Limit{
+			{Kind: "5-hour", Percent: sessionPct, IsActive: true, ResetsAt: reset},
+			{Kind: "7-day", Percent: weeklyPct, IsActive: true, ResetsAt: reset},
+			{Kind: "7-day spark", Percent: scopedPct, ResetsAt: reset},
+		}}
+
+		// when
+		readings := usage.Readings()
+
+		// then
+		require.Len(t, readings, 3)
+		assert.Equal(t, []string{"5-hour", "7-day", "7-day spark"},
+			[]string{readings[0].Kind, readings[1].Kind, readings[2].Kind})
+	})
+}
+
+func TestUsageBlocked(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should count an account the endpoint refuses as exhausted however empty its windows", func(t *testing.T) {
+		t.Parallel()
+		// given: Codex answers allowed=false once it stops serving an account, which a
+		// workspace whose credits ran out reaches without any window being full
+		usage := entities.Usage{LimitsOnly: true, Blocked: true, Limits: []entities.Limit{
+			{Kind: "5-hour", Percent: sessionPct, IsActive: true, ResetsAt: time.Now().Add(time.Hour)},
+		}}
+
+		// when
+		exhausted := usage.Exhausted(entities.MaxThreshold)
+
+		// then
+		assert.True(t, exhausted, "requests fail, which no threshold the user sets can make usable")
+	})
+
+	t.Run("should leave the recovery time to the caller when nothing over the threshold reports one",
+		func(t *testing.T) {
+			t.Parallel()
+			// given
+			usage := entities.Usage{LimitsOnly: true, Blocked: true, Limits: []entities.Limit{
+				{Kind: "5-hour", Percent: sessionPct, IsActive: true, ResetsAt: time.Now().Add(time.Hour)},
+			}}
+
+			// when
+			recovers := usage.RecoversAt(thresholdPct)
+
+			// then
+			assert.True(t, recovers.IsZero(), "a refusal says nothing of when it ends")
+		})
+
+	t.Run("should report the reset of the limit that a refused account has spent", func(t *testing.T) {
+		t.Parallel()
+		// given: the usual case, where the refusal comes with a full window
+		reset := time.Now().Add(longWeeklyReset).Truncate(time.Second)
+		usage := entities.Usage{LimitsOnly: true, Blocked: true, Limits: []entities.Limit{
+			{Kind: "30-day", Percent: scopedPct, IsActive: true, ResetsAt: reset},
+		}}
+
+		// when
+		recovers := usage.RecoversAt(thresholdPct)
+
+		// then
+		assert.Equal(t, reset, recovers)
+	})
+}
+
 func TestReadingSpent(t *testing.T) {
 	t.Parallel()
 

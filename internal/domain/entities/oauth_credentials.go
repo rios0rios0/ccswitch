@@ -10,8 +10,10 @@ import "slices"
 // silently discarded, which is what turns a stale pair into a logout.
 const ScopeInference = "user:inference"
 
-// OAuthCredentials holds the Claude Code OAuth tokens for a single account.
-// It mirrors the "claudeAiOauth" object stored inside ~/.claude/.credentials.json.
+// OAuthCredentials holds the OAuth tokens for a single account. For Claude Code it
+// mirrors the "claudeAiOauth" object stored inside ~/.claude/.credentials.json; for
+// Codex it carries the "tokens" of a ChatGPT sign-in in ~/.codex/auth.json, with the
+// expiry and plan read out of them.
 type OAuthCredentials struct {
 	AccessToken           string   `json:"accessToken"`
 	RefreshToken          string   `json:"refreshToken"`
@@ -20,6 +22,13 @@ type OAuthCredentials struct {
 	Scopes                []string `json:"scopes,omitempty"`
 	SubscriptionType      string   `json:"subscriptionType,omitempty"`
 	RateLimitTier         string   `json:"rateLimitTier,omitempty"`
+	// IDToken is the OpenID token of a Codex sign-in, which Codex reads the account's
+	// email and plan from. Codex cannot load a sign-in without one, so it is carried
+	// across every refresh that does not mint a new one. Claude credentials have none.
+	IDToken string `json:"idToken,omitempty"`
+	// AccountID is the ChatGPT account a Codex sign-in acts for, which a person with a
+	// workspace has more than one of. Claude credentials have none.
+	AccountID string `json:"accountId,omitempty"`
 }
 
 // AccessTokenExpired reports whether the access token is expired at the given
@@ -63,6 +72,9 @@ func (c OAuthCredentials) Valid() bool {
 // The pair on disk then goes stale, the refresh after that answers
 // invalid_grant, and Claude Code blanks the credentials. Claude Code merges the
 // same way for the same reason.
+//
+// Codex merges the same way too: its token endpoint restates the ID token only when it
+// minted a new one, and Codex cannot load a sign-in that lacks one.
 func (c OAuthCredentials) WithRefreshed(refreshed OAuthCredentials) OAuthCredentials {
 	merged := refreshed
 	if merged.RefreshToken == "" {
@@ -79,6 +91,12 @@ func (c OAuthCredentials) WithRefreshed(refreshed OAuthCredentials) OAuthCredent
 	}
 	if merged.RateLimitTier == "" {
 		merged.RateLimitTier = c.RateLimitTier
+	}
+	if merged.IDToken == "" {
+		merged.IDToken = c.IDToken
+	}
+	if merged.AccountID == "" {
+		merged.AccountID = c.AccountID
 	}
 	return merged
 }

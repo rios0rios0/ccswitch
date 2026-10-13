@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -22,18 +23,17 @@ const (
 )
 
 // MonitorCommand is the always-on daemon loop that polls usage and rotates the
-// active account when it is exhausted.
+// active account when it is exhausted, in every pool it watches.
 type MonitorCommand struct {
-	config      *entities.Config
-	accounts    repositories.AccountsRepository
-	credentials repositories.CredentialsRepository
-	usage       repositories.UsageRepository
-	tokens      repositories.TokensRepository
-	sessions    repositories.SessionsRepository
-	now         func() time.Time
+	config *entities.Config
+	// pools are the providers whose accounts the monitor rotates, each on its own:
+	// the first is the one the constructor was given, and the rest come from WithPool.
+	pools []Pool
+	now   func() time.Time
 }
 
-// NewMonitorCommand creates a MonitorCommand.
+// NewMonitorCommand creates a MonitorCommand over the accounts of one provider. More
+// providers join through WithPool.
 func NewMonitorCommand(
 	config *entities.Config,
 	accounts repositories.AccountsRepository,
@@ -43,14 +43,23 @@ func NewMonitorCommand(
 	sessions repositories.SessionsRepository,
 ) *MonitorCommand {
 	return &MonitorCommand{
-		config:      config,
-		accounts:    accounts,
-		credentials: credentials,
-		usage:       usage,
-		tokens:      tokens,
-		sessions:    sessions,
-		now:         time.Now,
+		config: config,
+		pools: []Pool{{
+			Accounts:    accounts,
+			Credentials: credentials,
+			Usage:       usage,
+			Tokens:      tokens,
+			Sessions:    sessions,
+		}},
+		now: time.Now,
 	}
+}
+
+// WithPool makes the monitor rotate another provider's accounts as well, on every tick
+// after the pools it already has.
+func (c *MonitorCommand) WithPool(pool Pool) *MonitorCommand {
+	c.pools = append(c.pools, pool)
+	return c
 }
 
 // Run polls at the configured interval until the context is cancelled.
@@ -82,19 +91,34 @@ func (c *MonitorCommand) tickOnce() {
 // effectiveThreshold reads the threshold that applies right now, which means
 // reloading the store: `ccswitch threshold` persists a new value there and a
 // running daemon has to honour it without being restarted. A store that cannot
-// be read falls back to the configured value.
+// be read falls back to the configured value. Every provider shares the settings,
+// so the first pool's store answers for all of them.
 func (c *MonitorCommand) effectiveThreshold() float64 {
-	store, err := c.accounts.Load()
+	store, err := c.pools[0].Accounts.Load()
 	if err != nil {
 		return c.config.Threshold
 	}
 	return c.config.ResolveThreshold(store.Settings)
 }
 
-// Tick performs one monitor cycle: capture the active credentials into the store,
-// poll every account that can be polled, and apply the rotation policy.
+// Tick performs one monitor cycle in every pool: capture the active credentials into
+// the store, poll every account that can be polled, and apply the rotation policy.
+//
+// The pools are independent, so one that fails -- a store that cannot be read, say
+// -- is reported without keeping the others from their tick.
 func (c *MonitorCommand) Tick(now time.Time) error {
-	store, err := c.accounts.Load()
+	failures := make([]error, 0, len(c.pools))
+	for _, pool := range c.pools {
+		if err := c.tickPool(pool, now); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// tickPool performs one monitor cycle over one provider's accounts.
+func (c *MonitorCommand) tickPool(pool Pool, now time.Time) error {
+	store, err := pool.Accounts.Load()
 	if err != nil {
 		return err
 	}
@@ -104,17 +128,17 @@ func (c *MonitorCommand) Tick(now time.Time) error {
 
 	threshold := c.config.ResolveThreshold(store.Settings)
 	store.Rotation.ClearExpired(now)
-	c.syncActiveCredentials(store)
+	syncActiveCredentials(pool, store)
 
 	current := c.resolveCurrent(store, now)
 	if current == nil {
-		return c.accounts.Save(store)
+		return pool.Accounts.Save(store)
 	}
 
-	c.pollAll(store, current, now, threshold)
-	c.reconcile(store, current, now)
-	c.installPending(store)
-	return c.accounts.Save(store)
+	c.pollAll(pool, store, current, now, threshold)
+	c.reconcile(pool, store, current, now)
+	installPending(pool, store)
+	return pool.Accounts.Save(store)
 }
 
 // resolveCurrent returns the current account. When the current pointer is unset
@@ -147,6 +171,7 @@ func (c *MonitorCommand) resolveCurrent(store *entities.Store, now time.Time) *e
 // limits actually reset rather than when its recorded reset time says so, and a
 // threshold change takes effect against fresh numbers instead of stale markers.
 func (c *MonitorCommand) pollAll(
+	pool Pool,
 	store *entities.Store,
 	current *entities.Account,
 	now time.Time,
@@ -157,22 +182,22 @@ func (c *MonitorCommand) pollAll(
 		if account == nil || !account.SupportsUsagePolling() {
 			continue
 		}
-		if !shouldPoll(account, current, now) {
+		if !shouldPoll(store.Provider, account, current, now) {
 			continue
 		}
-		c.pollAccount(store, account, now, threshold)
+		pollAccount(pool, store, account, now, threshold)
 	}
 }
 
-// shouldPoll reports whether this tick polls the given account.
-func shouldPoll(account, current *entities.Account, now time.Time) bool {
+// shouldPoll reports whether this tick polls the given account of the provider.
+func shouldPoll(provider entities.Provider, account, current *entities.Account, now time.Time) bool {
 	if account.Email == current.Email {
 		return true
 	}
 	// A spent or stripped token is attended to at once rather than on the slow
 	// cadence: a backup whose credentials have gone stale is precisely the one a
 	// rotation is about to install, and refreshing it late is the logout.
-	if account.Credentials.AccessTokenExpired(now.UnixMilli()) || account.Credentials.Degraded() {
+	if account.Credentials.AccessTokenExpired(now.UnixMilli()) || provider.Degraded(account.Credentials) {
 		return true
 	}
 	return now.Sub(account.LastPolledAt) >= backupPollInterval
@@ -180,21 +205,23 @@ func shouldPoll(account, current *entities.Account, now time.Time) bool {
 
 // pollAccount polls one account, persists whatever the poll refreshed, and marks
 // or clears its exhaustion.
-func (c *MonitorCommand) pollAccount(
+func pollAccount(
+	pool Pool,
 	store *entities.Store,
 	account *entities.Account,
 	now time.Time,
 	threshold float64,
 ) {
+	log := providerLog(store.Provider)
 	previous := account.Credentials
-	usage, creds, err := pollUsage(c.usage, c.tokens, &account.Credentials, now.UnixMilli())
+	usage, creds, err := pollUsage(pool.Usage, pool.Tokens, store.Provider, &account.Credentials, now.UnixMilli())
 	// Keep the credentials even when the poll failed: a refresh that already
 	// succeeded rotated the token server-side and cannot be undone, so discarding
 	// it would strand the store on a token the server has invalidated. When the
 	// refresh itself failed, pollUsage hands back the untouched credentials and
 	// both calls below are no-ops.
 	account.Credentials = creds
-	publishRefreshed(c.credentials, previous, account)
+	publishRefreshed(pool.Credentials, previous, account)
 
 	// Record the attempt, not just the success: this timestamp is the backup poll
 	// cadence's only input, so leaving it behind on a failure would make a failing
@@ -203,16 +230,16 @@ func (c *MonitorCommand) pollAccount(
 	account.LastPolledAt = now
 
 	if err != nil {
-		logger.Warnf("[ccswitch] usage poll for %s failed: %v", account.Email, err)
+		log.Warnf("[ccswitch] usage poll for %s failed: %v", account.Email, err)
 		return
 	}
 
 	account.LastUsage = usage
-	if account.Credentials.Degraded() {
+	if store.Provider.Degraded(account.Credentials) {
 		// The repair refresh in pollUsage ran and the scopes still fail the
 		// invariant, so the endpoint is refusing to mint them. Retrying forever
 		// would burn a refresh token per poll, so say so instead of looping quietly.
-		logger.Warnf("[ccswitch] %s still lacks the %q scope after a refresh; "+
+		log.Warnf("[ccswitch] %s still lacks the %q scope after a refresh; "+
 			"Claude Code will discard its credentials — log in again with `claude` and re-enroll",
 			account.Email, entities.ScopeInference)
 	}
@@ -231,6 +258,7 @@ func (c *MonitorCommand) pollAccount(
 // reconcile moves to whichever account the rotation policy selects, given the
 // exhaustion markers pollAll has just refreshed.
 func (c *MonitorCommand) reconcile(
+	pool Pool,
 	store *entities.Store,
 	current *entities.Account,
 	now time.Time,
@@ -240,12 +268,12 @@ func (c *MonitorCommand) reconcile(
 	target, ok := c.selectTarget(store, current, now, exhausted)
 	if !ok {
 		if exhausted {
-			logger.Warnf("[ccswitch] %s exhausted and no account has capacity; recovers %s",
+			providerLog(store.Provider).Warnf("[ccswitch] %s exhausted and no account has capacity; recovers %s",
 				current.Email, formatMoment(now, store.Rotation.ExhaustedUntil[current.Email]))
 		}
 		return
 	}
-	c.switchTo(store, current, &target, switchReason(current.LastUsage, exhausted))
+	switchTo(pool, store, current, &target, switchReason(current.LastUsage, exhausted))
 }
 
 // switchReason renders the human-readable cause of a switch.
@@ -294,26 +322,29 @@ func (c *MonitorCommand) selectTarget(
 }
 
 // switchTo installs the target account, deferring the on-disk write while a
-// claude session is running so a live process is never swapped underneath.
-func (c *MonitorCommand) switchTo(
+// session of the provider's CLI is running so a live process is never swapped
+// underneath.
+func switchTo(
+	pool Pool,
 	store *entities.Store,
 	current *entities.Account,
 	target *entities.Account,
 	reason string,
 ) {
-	if c.sessions != nil && c.sessions.ClaudeRunning() {
+	log := providerLog(store.Provider)
+	if pool.running() {
 		store.Rotation.CurrentEmail = target.Email
-		logger.Infof("[ccswitch] %s -> %s on next launch (%s; session active)",
+		log.Infof("[ccswitch] %s -> %s on next launch (%s; session active)",
 			current.Email, target.Email, reason)
 		return
 	}
 
-	if err := c.credentials.Write(&target.Credentials, &target.Identity); err != nil {
-		logger.Warnf("[ccswitch] failed to install %s: %v", target.Email, err)
+	if err := pool.Credentials.Write(&target.Credentials, &target.Identity); err != nil {
+		log.Warnf("[ccswitch] failed to install %s: %v", target.Email, err)
 		return
 	}
 	store.Rotation.CurrentEmail = target.Email
-	logger.Infof("[ccswitch] switched %s -> %s (%s)", current.Email, target.Email, reason)
+	log.Infof("[ccswitch] switched %s -> %s (%s)", current.Email, target.Email, reason)
 }
 
 // installPending completes a switch that an earlier tick could only record.
@@ -323,12 +354,12 @@ func (c *MonitorCommand) switchTo(
 // wrapper calling `ensure`, and never happened at all for anyone not using it.
 // Retrying here means the deferred switch lands as soon as the last session
 // exits.
-func (c *MonitorCommand) installPending(store *entities.Store) {
+func installPending(pool Pool, store *entities.Store) {
 	account := store.FindAccount(store.Rotation.CurrentEmail)
 	if account == nil {
 		return
 	}
-	onDisk, identity, err := c.credentials.Read()
+	onDisk, identity, err := pool.Credentials.Read()
 	if err != nil || onDisk == nil {
 		return
 	}
@@ -341,23 +372,24 @@ func (c *MonitorCommand) installPending(store *entities.Store) {
 	if !identityKnown(identity) {
 		return
 	}
-	if c.sessions != nil && c.sessions.ClaudeRunning() {
+	if pool.running() {
 		return
 	}
 
-	if err = c.credentials.Write(&account.Credentials, &account.Identity); err != nil {
-		logger.Warnf("[ccswitch] failed to install pending switch to %s: %v", account.Email, err)
+	log := providerLog(store.Provider)
+	if err = pool.Credentials.Write(&account.Credentials, &account.Identity); err != nil {
+		log.Warnf("[ccswitch] failed to install pending switch to %s: %v", account.Email, err)
 		return
 	}
-	logger.Infof("[ccswitch] installed pending switch to %s", account.Email)
+	log.Infof("[ccswitch] installed pending switch to %s", account.Email)
 }
 
-// syncActiveCredentials captures the on-disk credentials, which Claude Code may
-// have refreshed, back into the matching stored account so backup tokens stay
+// syncActiveCredentials captures the on-disk credentials, which the provider's CLI
+// may have refreshed, back into the matching stored account so backup tokens stay
 // current. The account is resolved by identity rather than by refresh token,
 // because the refresh token rotates on every refresh (see Store.MatchAccount).
-func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
-	onDisk, identity, err := c.credentials.Read()
+func syncActiveCredentials(pool Pool, store *entities.Store) {
+	onDisk, identity, err := pool.Credentials.Read()
 	if err != nil || onDisk == nil {
 		return
 	}
@@ -366,7 +398,7 @@ func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
 	// would overwrite the account's last good credentials with the marker saying
 	// they are gone, and flip it to LongLived so it is never polled again.
 	if onDisk.Blank() {
-		logger.Debugf("[ccswitch] installed credentials are blank; leaving the store untouched")
+		providerLog(store.Provider).Debugf("[ccswitch] installed credentials are blank; leaving the store untouched")
 		return
 	}
 
@@ -379,8 +411,8 @@ func (c *MonitorCommand) syncActiveCredentials(store *entities.Store) {
 		// in place, so attribute them to it.
 		account = store.FindAccount(store.Rotation.CurrentEmail)
 		if account != nil {
-			logger.Debugf("[ccswitch] attributed installed credentials to %s (no identity available)",
-				account.Email)
+			providerLog(store.Provider).Debugf(
+				"[ccswitch] attributed installed credentials to %s (no identity available)", account.Email)
 		}
 	}
 	if account == nil {

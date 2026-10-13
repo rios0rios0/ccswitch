@@ -57,7 +57,7 @@ func startProcessNamed(t *testing.T, name string) {
 func eventuallyRunning(repo *repositories.ToolhelpSessionsRepository) bool {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if repo.ClaudeRunning() {
+		if repo.Running() {
 			return true
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -65,7 +65,7 @@ func eventuallyRunning(repo *repositories.ToolhelpSessionsRepository) bool {
 	return false
 }
 
-func TestToolhelpSessionsRepositoryClaudeRunning(t *testing.T) {
+func TestToolhelpSessionsRepositoryRunning(t *testing.T) {
 	if os.Getenv(helperEnvVar) != "" {
 		t.Skip("running as the spawned helper process")
 	}
@@ -73,7 +73,19 @@ func TestToolhelpSessionsRepositoryClaudeRunning(t *testing.T) {
 	t.Run("should detect a running claude process", func(t *testing.T) {
 		// given
 		startProcessNamed(t, "claude.exe")
-		repo := repositories.NewToolhelpSessionsRepository()
+		repo := repositories.NewToolhelpSessionsRepository("claude")
+
+		// when
+		running := eventuallyRunning(repo)
+
+		// then
+		assert.True(t, running)
+	})
+
+	t.Run("should detect a running codex process when looking for Codex", func(t *testing.T) {
+		// given
+		startProcessNamed(t, "codex.exe")
+		repo := repositories.NewToolhelpSessionsRepository("codex")
 
 		// when
 		running := eventuallyRunning(repo)

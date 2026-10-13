@@ -56,7 +56,7 @@ func TestDeleteAccountsCommandExecute(t *testing.T) {
 		// given
 		accounts := &doubles.InMemoryAccountsRepository{Store: threeAccountStore()}
 		credentials := &doubles.StubCredentialsRepository{}
-		sessions := &doubles.StubSessionsRepository{Running: true}
+		sessions := &doubles.StubSessionsRepository{Active: true}
 		command := commands.NewDeleteAccountsCommand(accounts, credentials, sessions)
 
 		// when

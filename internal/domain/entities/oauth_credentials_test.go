@@ -69,6 +69,39 @@ func TestOAuthCredentialsWithRefreshed(t *testing.T) {
 		assert.Equal(t, int64(12000), merged.RefreshTokenExpiresAt)
 	})
 
+	t.Run("should carry a Codex ID token and account across a refresh that does not restate them",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: Codex's token endpoint restates the ID token only when it minted a new
+			// one, and Codex cannot load a sign-in without it
+			signIn := entities.OAuthCredentials{
+				AccessToken: "old-access", RefreshToken: "old-refresh", IDToken: "id", AccountID: "workspace",
+			}
+			minted := entities.OAuthCredentials{AccessToken: "new-access", RefreshToken: "new-refresh"}
+
+			// when
+			merged := signIn.WithRefreshed(minted)
+
+			// then
+			assert.Equal(t, "new-access", merged.AccessToken)
+			assert.Equal(t, "id", merged.IDToken)
+			assert.Equal(t, "workspace", merged.AccountID)
+		})
+
+	t.Run("should take a new Codex ID token when the refresh minted one", func(t *testing.T) {
+		t.Parallel()
+		// given
+		signIn := entities.OAuthCredentials{AccessToken: "old-access", IDToken: "old-id", AccountID: "workspace"}
+		minted := entities.OAuthCredentials{AccessToken: "new-access", IDToken: "new-id", AccountID: "other"}
+
+		// when
+		merged := signIn.WithRefreshed(minted)
+
+		// then
+		assert.Equal(t, "new-id", merged.IDToken)
+		assert.Equal(t, "other", merged.AccountID)
+	})
+
 	t.Run("should carry the prior refresh token when the response omits it", func(t *testing.T) {
 		t.Parallel()
 		// given

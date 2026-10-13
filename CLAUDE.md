@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `ccswitch` is a Go CLI + daemon that watches Claude Code usage and rotates the `claudeAiOauth` block
 of Claude Code's credential store — `~/.claude/.credentials.json` on Linux/Windows, the login
 keychain on macOS — between enrolled backup accounts when the active one is exhausted. The next
-`claude` launch then authenticates as the swapped-in account. See `README.md` for user-facing
+`claude` launch then authenticates as the swapped-in account. It does the same for the OpenAI Codex
+CLI, rotating the `tokens` of the ChatGPT sign-in in `~/.codex/auth.json` between enrolled Codex
+accounts; each provider's accounts rotate only among themselves. See `README.md` for user-facing
 behavior, flags, and shell integration.
 
 ## Commands
@@ -28,23 +30,30 @@ Run a single test with the standard toolchain, e.g.
 Clean Architecture; the domain layer must never import infrastructure.
 
 - `internal/domain/entities` — pure types (`Account`, `Store`, `Settings`, `Usage`, `Limit`,
-  `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`).
+  `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`, `Provider`).
 - `internal/domain/commands` — one command per CLI verb (`enroll`, `list`, `show`, `update`,
   `remove`, `reorder`, `status`, `use`, `rotate`, `ensure`, `capacity`, `threshold`, `monitor`,
   `self-update`),
-  each constructed from repository ports. `version` is printed by the controller alone.
+  each constructed from repository ports. `version` is printed by the controller alone. A `Pool`
+  bundles one provider's ports; `list`, `status`, `threshold` and `monitor` take one per provider
+  (`WithPool`), the rest act on the pool of one.
 - `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`,
   `SelfUpdate`).
-- `internal/infrastructure/repositories` — adapters: JSON store, the credentials swappers
+- `internal/infrastructure/repositories` — adapters: JSON store (`JSONAccountsRepository`, whose
+  `ForProvider` gives Codex a store file of its own), the credentials swappers
   (`FileCredentialsRepository` for `.credentials.json`, `KeychainCredentialsRepository` for the macOS
   login keychain; both patch `oauthAccount` in `~/.claude.json` through the shared
-  `claudeStateFile`), HTTP usage/refresh clients, the session probes (`ProcSessionsRepository`
-  scanning `/proc`, `PSSessionsRepository` reading the macOS process table,
-  `ToolhelpSessionsRepository` walking a Windows ToolHelp32 snapshot), and
+  `claudeStateFile`; `CodexCredentialsRepository` for Codex's `auth.json`), HTTP usage/refresh clients
+  (`Anthropic*` for Claude, `OpenAI*` for Codex, reading OpenAI token claims through
+  `openai_claims.go`), the session probes (`ProcSessionsRepository` scanning `/proc`,
+  `PSSessionsRepository` reading the macOS process table, `ToolhelpSessionsRepository` walking a
+  Windows ToolHelp32 snapshot — each told which CLI to look for), and
   `CliforgeSelfUpdateRepository`, which checks for and installs GitHub releases through the shared
   [cliforge](https://github.com/rios0rios0/cliforge) library.
 - `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`), including the root's
-  `--verbose`/`--version` flags and the passive update check its `PersistentPreRun` runs.
+  `--verbose`/`--version`/`--provider` flags, the passive update check its `PersistentPreRun` runs,
+  the per-provider pools `newDeps` builds, and `provider_selection.go`, which resolves which
+  provider an email names.
 - `internal/infrastructure/services` — `DaemonService` (pidfile + detached self-exec).
 
 Platform differences are isolated in `_unix.go` / `_darwin.go` / `_windows.go` pairs —
@@ -73,7 +82,8 @@ Nothing else branches on the OS; keep it that way.
   account's credentials, and it is why publishing the same account's newer tokens is safe even while
   a session runs (unlike an account switch, which the running-session guard in `switchTo` blocks).
   Every command that polls usage — `monitor`, `list`, `status` — can spend the refresh token, so
-  every one of them publishes.
+  every one of them publishes. Codex is no different: OpenAI's token endpoint rotates the refresh
+  token too and refuses the old one afterwards (`refresh_token_reused`).
 - **Every enrolled account is polled, not only the active one.** Refresh tokens are rotated on every
   use and expire in weeks, so a backup nobody touches between rotations goes stale in the store and
   installing it hands Claude Code a token the server has forgotten. Backups poll on
@@ -92,7 +102,9 @@ Nothing else branches on the OS; keep it that way.
 - **Exhaustion is decided by the utilization percentage alone.** The usage endpoint's `severity` is
   a display band, not a ceiling: it reads `critical` from around 95% while `locked_reason` is still
   null and the account is perfectly usable. Treating it as exhaustion capped every threshold at the
-  point the warning fires, which made a threshold of 99 behave exactly like 90.
+  point the warning fires, which made a threshold of 99 behave exactly like 90. The one other trigger
+  is a refusal, not a band: Codex answering `allowed: false` sets `Usage.Blocked`, which exhausts the
+  account because its requests fail — a workspace out of credits reaches it with no window full.
 - **The threshold in force comes from the store unless `--threshold` was named.** `ccswitch
   threshold` persists it so the monitor — which reloads the store every tick — retunes without a
   restart, which is why `daemonArgs` must not bake `--threshold` into the detached daemon unless the
@@ -103,7 +115,10 @@ Nothing else branches on the OS; keep it that way.
   account". Resolve through `Store.MatchAccount` (matches on `accountUuid`/`email`, falling back to
   the token only when no identity is known). `OAuthCredentials.SameAccountAs` is the token-only
   comparison; do not use it to *reject* a match. Getting this wrong pins the store to a rotated-away
-  token (401 on every refresh) and makes `ensure` clobber good credentials with stale ones.
+  token (401 on every refresh) and makes `ensure` clobber good credentials with stale ones. A Codex account's
+  `AccountUUID` is its seat, `<chatgpt_user_id>__<chatgpt_account_id>` as Codex's own
+  `chatgpt_account_user_id` claim has it: every member of a workspace shares the account id, so the
+  account id alone would match two people's seats to one enrolled account.
 - **Six targets are released, so platform code must compile for all of them.** `make cross-compile`
   type-checks linux/darwin/windows × amd64/arm64, and the workflow runs the same matrix on every
   pull request. Skipping it is how `Setsid` — which does not exist on Windows — reached delivery and
@@ -124,10 +139,43 @@ Nothing else branches on the OS; keep it that way.
   write, since inferring absence from "the read failed" erases exactly the `mcpOAuth` tokens this
   guards.
 - **The Claude desktop app is not a Claude Code session.** It runs as
-  `Claude.app/Contents/MacOS/Claude`, whose base name matches the CLI's under `matchesClaudeProcess`'s
-  case-insensitive compare. Counting it would make `ClaudeRunning()` permanently true and silently
+  `Claude.app/Contents/MacOS/Claude`, whose base name matches the CLI's under `matchesProcess`'s
+  case-insensitive compare. Counting it would make `Running()` permanently true and silently
   disable rotation for anyone who keeps the desktop app open, so `PSSessionsRepository` skips
-  executables inside `.app` bundles.
+  executables inside `.app` bundles, whichever CLI it looks for. Each provider has a probe of its own:
+  a running `codex` (an editor's `codex app-server` included, since it reads the same `auth.json`)
+  defers Codex's switches and never Claude's.
+- **Each provider's accounts rotate only among themselves, in a store file of their own.** Claude
+  Code and Codex read different credential stores, so an account only takes over from an account of
+  its provider. Claude's accounts stay in the main store (`store.json`), which also holds the
+  `Settings` every provider shares; Codex's live in `store.codex.json` beside it, through
+  `JSONAccountsRepository.ForProvider`, which reads the settings from the main store and never writes
+  them. Never add a provider as a new key of `store.json`: a ccswitch that predates it — such as a
+  daemon still running the old binary after an update — rewrites that file with only the keys it
+  knows, which would erase every account of the new provider. `Store.Provider` is set by the
+  repository that loads the store and is never persisted; its zero value is Claude, which is what
+  every test double's store is. Resolve per-provider behavior through `entities.Provider` (a profile
+  map, not branches), and name the provider in user-facing text through it, so that Claude's wording
+  stays byte-for-byte what it was.
+- **The scope invariant is Claude's alone.** Commands decide whether credentials need the repair
+  refresh through `store.Provider.Degraded(creds)`, never `creds.Degraded()` directly: a Codex sign-in
+  names no Claude scope, and treating it as degraded would spend a refresh token on every poll. The
+  Anthropic adapter, which only ever sees Claude credentials, keeps using `Degraded()`.
+- **A Codex sign-in needs its ID token, and an API-key sign-in is never replaced.** Codex fails to load
+  an `auth.json` whose ID token is missing or unparsable — signing it out — so
+  `CodexCredentialsRepository.Write` refuses credentials without one, and `WithRefreshed` carries
+  `IDToken` and `AccountID` through every refresh that does not restate them. Writing `auth.json` is a
+  read-modify-write, like Claude's stores: every other key, and any unknown key of `tokens`, survives.
+  A Codex signed in some other way than with ChatGPT (`auth_mode` other than `chatgpt`, or an API key
+  with no tokens in an older file) answers `ErrCodexNotChatGPT` on read and refuses the write: that is
+  a deliberate choice a rotation must not undo. The OpenAI token adapter refuses a refresh answered
+  without an access token rather than storing a blank pair.
+- **Codex's windows depend on its plan, so its usage is limits only.** A free plan has a single 30-day
+  window, the paid plans a 5-hour and a 7-day one, so the OpenAI usage adapter sets `Usage.LimitsOnly`
+  and names each window by its length (`windowKind`); `Readings` then lists the limits alone rather
+  than inventing empty 5-hour and 7-day windows, and `status` prints the active limits in their place.
+  Only the main limit's windows are active: a code-review limit or a limit on one model leaves every
+  other request served, so it is listed and never rotates an account away.
 - **Plain output is what pipes and scripts read, so it never changes with the styling.** `list` and
   `show` dress themselves up only as `Config.Output` says, which `PersistentPreRun` resolves through
   `outputStyle`: `--color` first, then `FORCE_COLOR` (forces, or drops colors at `0`/`false`), then
@@ -139,7 +187,18 @@ Nothing else branches on the OS; keep it that way.
   byte-for-byte what it was. Pad text before painting it, since `fmt` widths count the escape codes, and
   color a figure through `Reading.Spent`, the same test that exhausts an active limit, never a second
   copy of it. The decorated figure and meter round down, as Claude Code's `/usage` does, so a figure
-  never reads as the threshold while it is still yellow.
+  never reads as the threshold while it is still yellow. The providers are named — logo and name in
+  their brand tone on a terminal, the bare name when plain — above their accounts in `list`, and on a
+  `provider:` line in `show`; plain output names them only once an account of a provider other than
+  Claude is enrolled (`namesProviders`), or in `show` for such an account, so a store of Claude
+  accounts alone prints byte-for-byte what it always has. The label column of a reading is at least
+  `readingLabelWidth` wide and widens per account to fit a limit named for a model.
+- **`--provider` keeps the old commands' meaning.** `enroll`, `rotate`, `ensure` and `capacity` act on
+  Claude's accounts unless `--provider` names another, since the shell integration calls them that
+  way; commands that name an email find its provider on their own (`providerOf`) and ask for
+  `--provider` only when the email is enrolled with both; `reorder` orders one provider's accounts at
+  a time; `list` and `status` show every provider unless one is named; `threshold` and `monitor`
+  always cover all of them. `daemonArgs` passes `--codex-home` on to the daemon, like the Claude paths.
 - **Long-lived tokens cannot be polled.** Tokens from `claude setup-token` lack the `user:profile`
   scope that `GET /api/oauth/usage` requires (403), so such accounts are flagged `LongLived` and
   gated by `Account.SupportsUsagePolling`. Never poll them or select them automatically — they are a
@@ -186,6 +245,9 @@ Nothing else branches on the OS; keep it that way.
   from `palette` and keep to the sixteen theme colors plus bold and faint: never "bright black", which
   Solarized Dark paints in the background color, and bold only on red, since Windows Terminal and
   xterm show bold as bright by default, which washes green, yellow and cyan out on a light background.
+  The brand tones are each assistant's own sixteen-color mark: bright red for Claude (Claude Code's
+  `ansi:redBright`, which Solarized renders as Claude's orange) and magenta for Codex (what the Codex
+  CLI's style guide reserves for Codex), never bold.
   `-v`/`--verbose` and `DEBUG=true` turn on debug logging, and `daemonArgs` passes `--verbose` on to a
   daemon started by an invocation that named it.
 - Tests live in external `_test` packages, structure bodies with `// given` / `// when` / `// then`
