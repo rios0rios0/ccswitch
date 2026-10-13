@@ -11,7 +11,8 @@ import (
 // provide one (in which case no session is ever detected).
 const procRoot = "/proc"
 
-// newSessionsRepository returns the session detector for this platform.
-func newSessionsRepository() domain.SessionsRepository {
-	return repositories.NewProcSessionsRepository(procRoot)
+// newSessionsRepository returns the detector of the sessions of the CLI that runs
+// as command, for this platform.
+func newSessionsRepository(command string) domain.SessionsRepository {
+	return repositories.NewProcSessionsRepository(procRoot, command)
 }

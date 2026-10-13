@@ -36,23 +36,23 @@ func NewEnrollAccountCommand(
 // enrolled directly under email (e.g. a long-lived token from `claude
 // setup-token`), bypassing the Claude Code credentials file entirely; such an
 // account can only be selected manually, because its token lacks the scope the
-// usage endpoint requires. Otherwise the currently logged-in account is read
-// from disk. The first enrolled account becomes current.
+// usage endpoint requires. Otherwise the account the store's provider is signed in
+// to is read from its credential store. The first enrolled account becomes current.
 //
 // A new account joins at the end of the rotation order and a re-enrolled one keeps
 // its place, unless priority is given, in which case the account moves to the
 // place it names.
 func (c *EnrollAccountCommand) Execute(token, email string, priority *entities.Priority) error {
-	creds, identity, err := c.resolve(token, email)
+	store, err := c.accounts.Load()
+	if err != nil {
+		return err
+	}
+	creds, identity, err := c.resolve(store.Provider, token, email)
 	if err != nil {
 		return err
 	}
 	resolvedEmail := accountEmail(identity)
 
-	store, err := c.accounts.Load()
-	if err != nil {
-		return err
-	}
 	// A long-lived token lacks the `user:profile` scope, so its usage can never be
 	// read; record that so the monitor skips polling it instead of failing.
 	upsertAccount(store, resolvedEmail, identity, creds).LongLived = token != ""
@@ -79,11 +79,16 @@ func (c *EnrollAccountCommand) Execute(token, email string, priority *entities.P
 }
 
 // resolve returns the credentials and identity to enroll, either built directly
-// from a supplied long-lived token or read from the active Claude Code session.
+// from a supplied long-lived token or read from the provider's active session.
 func (c *EnrollAccountCommand) resolve(
+	provider entities.Provider,
 	token, email string,
 ) (*entities.OAuthCredentials, *entities.AccountIdentity, error) {
 	if token != "" {
+		if !provider.LongLivedTokens() {
+			return nil, nil, fmt.Errorf("--token enrolls a long-lived token, which %s does not mint; "+
+				"log in with %s and enroll without it", provider.Name(), provider.LoginCommand())
+		}
 		if email == "" {
 			return nil, nil, errors.New("--email is required when --token is set")
 		}
@@ -96,15 +101,15 @@ func (c *EnrollAccountCommand) resolve(
 
 	creds, identity, err := c.credentials.Read()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read current Claude credentials "+
-			"(run `claude` and `/login` first): %w", err)
+		return nil, nil, fmt.Errorf("failed to read current %s credentials (run %s first): %w",
+			provider.Name(), provider.LoginSteps(), err)
 	}
 	if !creds.Valid() {
-		return nil, nil, errors.New("current Claude credentials are incomplete; log in with `claude` first")
+		return nil, nil, fmt.Errorf("current %s credentials are incomplete; log in with %s first",
+			provider.Name(), provider.LoginCommand())
 	}
 	if accountEmail(identity) == "" {
-		return nil, nil, errors.New("could not determine the account email; " +
-			"ensure ~/.claude.json contains an oauthAccount block")
+		return nil, nil, fmt.Errorf("could not determine the account email; %s", provider.IdentityHint())
 	}
 	return creds, identity, nil
 }

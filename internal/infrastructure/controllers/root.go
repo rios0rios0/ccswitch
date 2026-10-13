@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	logger "github.com/sirupsen/logrus"
@@ -27,8 +28,15 @@ const (
 	defaultClientID  = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	defaultUsageBase = "https://api.anthropic.com"
 	defaultTokenURL  = "https://platform.claude.com/v1/oauth/token" //nolint:gosec // public endpoint, not a secret
-	pidFileName      = "monitor.pid"
-	logFileName      = "monitor.log"
+	// defaultCodexClientID is the Codex CLI's public OAuth client identifier, used to
+	// refresh the access tokens of Codex accounts.
+	defaultCodexClientID  = "app_EMoamEEZ73f0CkXaXp7hrann"
+	defaultCodexUsageBase = "https://chatgpt.com/backend-api"
+	defaultCodexTokenURL  = "https://auth.openai.com/oauth/token" //nolint:gosec // public endpoint, not a secret
+	// codexHomeVariable relocates Codex's home directory, as Codex itself honors it.
+	codexHomeVariable = "CODEX_HOME"
+	pidFileName       = "monitor.pid"
+	logFileName       = "monitor.log"
 
 	// binaryName is the name ccswitch is installed and released under; its GitHub
 	// releases live at releaseOwner/releaseRepository.
@@ -69,13 +77,24 @@ func ExitCode(err error) int {
 
 // deps bundles the infrastructure adapters and config shared by the subcommands.
 type deps struct {
-	config      *entities.Config
-	accounts    *repositories.JSONAccountsRepository
-	credentials domain.CredentialsRepository
-	usage       *repositories.AnthropicUsageRepository
-	tokens      *repositories.AnthropicTokensRepository
-	sessions    domain.SessionsRepository
-	daemon      *services.DaemonService
+	config *entities.Config
+	// pools holds the repositories of every provider's accounts.
+	pools  map[entities.Provider]commands.Pool
+	daemon *services.DaemonService
+}
+
+// pool returns the repositories of the given provider's accounts.
+func (d *deps) pool(provider entities.Provider) commands.Pool {
+	return d.pools[provider.Resolved()]
+}
+
+// orderedPools returns the repositories of the given providers' accounts, in order.
+func (d *deps) orderedPools(providers []entities.Provider) []commands.Pool {
+	pools := make([]commands.Pool, 0, len(providers))
+	for _, provider := range providers {
+		pools = append(pools, d.pool(provider))
+	}
+	return pools
 }
 
 // NewRootCommand builds the ccswitch root command with every subcommand wired,
@@ -92,15 +111,17 @@ func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.
 	cfg := defaultConfig()
 
 	root := &cobra.Command{
-		Use:           binaryName,
-		Short:         "Monitor Claude Code usage and rotate between backup accounts",
-		Long:          "ccswitch watches Claude Code usage limits and transparently rotates between enrolled backup accounts when the active account runs out.",
+		Use:   binaryName,
+		Short: "Monitor Claude Code and Codex usage and rotate between backup accounts",
+		Long: "ccswitch watches the usage limits of Claude Code and the Codex CLI and transparently " +
+			"rotates between the enrolled backup accounts of each when its active account runs out.",
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
 	color := colorAuto
-	bindPersistentFlags(root, cfg, &color)
+	var provider providerValue
+	bindPersistentFlags(root, cfg, &color, &provider)
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		// Whether --threshold was named decides who wins between the flag and the
 		// value `ccswitch threshold` persisted, so it has to be read after parsing.
@@ -115,18 +136,18 @@ func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.
 	}
 
 	root.AddCommand(
-		newEnrollCommand(cfg),
-		newListCommand(cfg),
-		newShowCommand(cfg),
-		newUpdateCommand(cfg),
-		newRemoveCommand(cfg),
-		newReorderCommand(cfg),
-		newStatusCommand(cfg),
-		newUseCommand(cfg),
-		newRotateCommand(cfg),
+		newEnrollCommand(cfg, &provider),
+		newListCommand(cfg, &provider),
+		newShowCommand(cfg, &provider),
+		newUpdateCommand(cfg, &provider),
+		newRemoveCommand(cfg, &provider),
+		newReorderCommand(cfg, &provider),
+		newStatusCommand(cfg, &provider),
+		newUseCommand(cfg, &provider),
+		newRotateCommand(cfg, &provider),
 		newThresholdCommand(cfg),
-		newEnsureCommand(cfg),
-		newCapacityCommand(cfg),
+		newEnsureCommand(cfg, &provider),
+		newCapacityCommand(cfg, &provider),
 		newMonitorCommand(cfg),
 		newSelfUpdateCommand(cfg, updates),
 		newVersionCommand(version),
@@ -156,11 +177,13 @@ func checksForUpdates(cmd *cobra.Command) bool {
 }
 
 // bindPersistentFlags attaches the flags shared by all subcommands, writing into
-// the shared config, and the color mode, which are read after cobra parses them.
-func bindPersistentFlags(root *cobra.Command, cfg *entities.Config, color *colorMode) {
+// the shared config, and the color mode and the provider, which are read after
+// cobra parses them.
+func bindPersistentFlags(root *cobra.Command, cfg *entities.Config, color *colorMode, provider *providerValue) {
 	flags := root.PersistentFlags()
 	flags.Var(color, colorFlag,
 		"when to color list and show: auto (on a terminal, unless NO_COLOR is set), always, or never")
+	flags.VarP(provider, providerFlag, "p", providerUsage)
 	// pflag shows the first back-quoted word of a usage as the name of the flag's
 	// value, so back-quotes in a usage name the value and nothing else.
 	flags.Float64Var(&cfg.Threshold, "threshold", cfg.Threshold,
@@ -175,22 +198,48 @@ func bindPersistentFlags(root *cobra.Command, cfg *entities.Config, color *color
 		"path to Claude Code .credentials.json")
 	flags.StringVar(&cfg.ClaudeJSONPath, "claude-json", cfg.ClaudeJSONPath,
 		"path to Claude Code ~/.claude.json (for the oauthAccount identity)")
+	flags.StringVar(&cfg.CodexHome, codexHomeFlag, cfg.CodexHome,
+		"path to the Codex home directory, whose auth.json holds the Codex sign-in")
 	flags.BoolVarP(&cfg.Verbose, verboseFlag, "v", cfg.Verbose,
 		"enable debug logging, which a monitor daemon started by this invocation keeps")
 }
 
 // newDeps constructs the infrastructure adapters from the resolved config. It is
 // called inside each subcommand's RunE so it observes final flag values.
+//
+// Each provider's accounts are kept in a store of their own: Claude's in the main
+// store, which also holds the settings every provider shares, and Codex's in a file
+// beside it (see codexStorePath).
 func newDeps(cfg *entities.Config) *deps {
+	store := repositories.NewJSONAccountsRepository(cfg.StorePath)
 	return &deps{
-		config:      cfg,
-		accounts:    repositories.NewJSONAccountsRepository(cfg.StorePath),
-		credentials: newCredentialsRepository(cfg),
-		usage:       repositories.NewAnthropicUsageRepository(cfg.UsageBaseURL, nil),
-		tokens:      repositories.NewAnthropicTokensRepository(cfg.TokenURL, cfg.ClientID, nil),
-		sessions:    newSessionsRepository(),
-		daemon:      newDaemonService(cfg),
+		config: cfg,
+		pools: map[entities.Provider]commands.Pool{
+			entities.ProviderClaude: {
+				Accounts:    store,
+				Credentials: newCredentialsRepository(cfg),
+				Usage:       repositories.NewAnthropicUsageRepository(cfg.UsageBaseURL, nil),
+				Tokens:      repositories.NewAnthropicTokensRepository(cfg.TokenURL, cfg.ClientID, nil),
+				Sessions:    newSessionsRepository(entities.ProviderClaude.Command()),
+			},
+			entities.ProviderCodex: {
+				Accounts:    store.ForProvider(entities.ProviderCodex, codexStorePath(cfg.StorePath)),
+				Credentials: repositories.NewCodexCredentialsRepository(cfg.CodexHome),
+				Usage:       repositories.NewOpenAIUsageRepository(cfg.CodexUsageBaseURL, nil),
+				Tokens:      repositories.NewOpenAITokensRepository(cfg.CodexTokenURL, cfg.CodexClientID, nil),
+				Sessions:    newSessionsRepository(entities.ProviderCodex.Command()),
+			},
+		},
+		daemon: newDaemonService(cfg),
 	}
+}
+
+// codexStorePath returns where Codex's accounts are kept: beside the main store, named
+// after it, so that two stores kept in one directory never share their Codex accounts
+// -- store.json keeps them in store.codex.json.
+func codexStorePath(storePath string) string {
+	extension := filepath.Ext(storePath)
+	return strings.TrimSuffix(storePath, extension) + "." + string(entities.ProviderCodex) + extension
 }
 
 // newDaemonService supervises the monitor daemon through the pidfile and log kept
@@ -211,16 +260,28 @@ func defaultConfig() *entities.Config {
 		home = "."
 	}
 	return &entities.Config{
-		CredentialsPath: filepath.Join(home, ".claude", ".credentials.json"),
-		ClaudeJSONPath:  filepath.Join(home, ".claude.json"),
-		StorePath:       defaultStorePath(home),
-		Threshold:       defaultThreshold,
-		Interval:        defaultInterval,
-		PreferPrimary:   true,
-		UsageBaseURL:    defaultUsageBase,
-		TokenURL:        defaultTokenURL,
-		ClientID:        defaultClientID,
+		CredentialsPath:   filepath.Join(home, ".claude", ".credentials.json"),
+		ClaudeJSONPath:    filepath.Join(home, ".claude.json"),
+		StorePath:         defaultStorePath(home),
+		Threshold:         defaultThreshold,
+		Interval:          defaultInterval,
+		PreferPrimary:     true,
+		UsageBaseURL:      defaultUsageBase,
+		TokenURL:          defaultTokenURL,
+		ClientID:          defaultClientID,
+		CodexHome:         defaultCodexHome(home),
+		CodexUsageBaseURL: defaultCodexUsageBase,
+		CodexTokenURL:     defaultCodexTokenURL,
+		CodexClientID:     defaultCodexClientID,
 	}
+}
+
+// defaultCodexHome returns Codex's home directory, honoring CODEX_HOME as Codex does.
+func defaultCodexHome(home string) string {
+	if relocated := os.Getenv(codexHomeVariable); relocated != "" {
+		return relocated
+	}
+	return filepath.Join(home, ".codex")
 }
 
 // defaultStorePath returns the ccswitch store location, honoring XDG_STATE_HOME.

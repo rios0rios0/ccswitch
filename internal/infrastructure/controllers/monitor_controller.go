@@ -26,7 +26,7 @@ func newMonitorCommand(cfg *entities.Config) *cobra.Command {
 	var ensureDaemon bool
 	cmd := &cobra.Command{
 		Use:   monitorCommandName,
-		Short: "Run the usage-monitoring daemon that rotates accounts on exhaustion",
+		Short: "Run the usage-monitoring daemon that rotates each provider's accounts on exhaustion",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			deps := newDeps(cfg)
 			if ensureDaemon {
@@ -66,10 +66,21 @@ func runMonitorForeground(deps *deps) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	return newMonitor(deps).Run(ctx)
+}
+
+// newMonitor builds the monitor over every provider's accounts, each rotated on its
+// own. Claude's pool comes first, since its store holds the settings every provider
+// shares.
+func newMonitor(deps *deps) *commands.MonitorCommand {
+	pools := deps.orderedPools(entities.Providers())
 	monitor := commands.NewMonitorCommand(
-		deps.config, deps.accounts, deps.credentials, deps.usage, deps.tokens, deps.sessions,
+		deps.config, pools[0].Accounts, pools[0].Credentials, pools[0].Usage, pools[0].Tokens, pools[0].Sessions,
 	)
-	return monitor.Run(ctx)
+	for _, pool := range pools[1:] {
+		monitor.WithPool(pool)
+	}
+	return monitor
 }
 
 // daemonArgs reconstructs the flags the detached daemon must run with so it uses
@@ -86,6 +97,7 @@ func daemonArgs(cfg *entities.Config) []string {
 		"--store", cfg.StorePath,
 		"--credentials", cfg.CredentialsPath,
 		"--claude-json", cfg.ClaudeJSONPath,
+		"--" + codexHomeFlag, cfg.CodexHome,
 		fmt.Sprintf("--prefer-primary=%t", cfg.PreferPrimary),
 	}
 	if cfg.ThresholdExplicit {

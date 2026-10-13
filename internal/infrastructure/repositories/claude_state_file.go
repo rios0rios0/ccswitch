@@ -63,7 +63,7 @@ func (s claudeStateFile) patchIdentity(identity *entities.AccountIdentity) {
 		root["oauthAccount"] = merged
 	}
 	if out, mErr := json.MarshalIndent(root, "", "  "); mErr == nil {
-		_ = atomicWrite(s.path, out, filePerm)
+		_ = atomicWrite(s.path, out)
 	}
 }
 

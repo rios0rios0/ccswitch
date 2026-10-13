@@ -12,9 +12,13 @@ import (
 
 // SetThresholdCommand persists the rotation threshold and applies it on the spot.
 type SetThresholdCommand struct {
-	config      *entities.Config
-	accounts    repositories.AccountsRepository
-	credentials repositories.CredentialsRepository
+	config *entities.Config
+	// accounts is the store the threshold is persisted in: the first pool's, which
+	// holds the settings every provider shares.
+	accounts repositories.AccountsRepository
+	// pools are the providers the threshold is applied to, the first one being the one
+	// the constructor was given.
+	pools []Pool
 	// monitor re-applies the rotation policy under the new threshold. Reusing it
 	// rather than reimplementing the selection is what makes `threshold` and the
 	// daemon agree on which account should be active.
@@ -22,7 +26,8 @@ type SetThresholdCommand struct {
 	now     func() time.Time
 }
 
-// NewSetThresholdCommand creates a SetThresholdCommand.
+// NewSetThresholdCommand creates a SetThresholdCommand over the accounts of one
+// provider, whose store holds the settings. More providers join through WithPool.
 func NewSetThresholdCommand(
 	config *entities.Config,
 	accounts repositories.AccountsRepository,
@@ -32,12 +37,27 @@ func NewSetThresholdCommand(
 	sessions repositories.SessionsRepository,
 ) *SetThresholdCommand {
 	return &SetThresholdCommand{
-		config:      config,
-		accounts:    accounts,
-		credentials: credentials,
-		monitor:     NewMonitorCommand(config, accounts, credentials, usage, tokens, sessions),
-		now:         time.Now,
+		config:   config,
+		accounts: accounts,
+		pools: []Pool{{
+			Accounts:    accounts,
+			Credentials: credentials,
+			Usage:       usage,
+			Tokens:      tokens,
+			Sessions:    sessions,
+		}},
+		monitor: NewMonitorCommand(config, accounts, credentials, usage, tokens, sessions),
+		now:     time.Now,
 	}
+}
+
+// WithPool applies the threshold to another provider's accounts as well. The
+// threshold itself stays in the first pool's store, which every provider reads it
+// from.
+func (c *SetThresholdCommand) WithPool(pool Pool) *SetThresholdCommand {
+	c.pools = append(c.pools, pool)
+	c.monitor.WithPool(pool)
+	return c
 }
 
 // Show prints the threshold in force and where it comes from.
@@ -90,14 +110,7 @@ func (c *SetThresholdCommand) Reset() error {
 	fmt.Fprintf(os.Stdout, "[ccswitch] rotation threshold reset to %.0f%% (was %.0f%%)\n",
 		c.config.ResolveThreshold(store.Settings), previous)
 	c.warnShadowed()
-
-	if len(store.Accounts) == 0 {
-		return nil
-	}
-	if err = c.monitor.Tick(c.now()); err != nil {
-		return fmt.Errorf("failed to re-apply the rotation policy: %w", err)
-	}
-	return c.report()
+	return c.reapply()
 }
 
 // Execute persists the given threshold and immediately re-applies the rotation
@@ -134,7 +147,18 @@ func (c *SetThresholdCommand) Execute(threshold float64) error {
 		threshold, previous)
 
 	c.warnShadowed()
-	if len(store.Accounts) == 0 {
+	return c.reapply()
+}
+
+// reapply runs a monitor cycle under the threshold now in force, in every pool, and
+// reports which account each provider has active afterwards. With nothing enrolled
+// anywhere there is nothing to apply it to.
+func (c *SetThresholdCommand) reapply() error {
+	stores, err := loadStores(c.pools)
+	if err != nil {
+		return err
+	}
+	if enrolledCount(stores) == 0 {
 		return nil
 	}
 
@@ -155,37 +179,52 @@ func (c *SetThresholdCommand) warnShadowed() {
 			"for this invocation\n", c.config.Threshold)
 }
 
-// report prints which account the re-applied policy selected, and whether the
-// switch is still waiting on a running session.
+// report prints which account the re-applied policy selected for each provider that
+// has accounts, and whether the switch is still waiting on a running session. Once a
+// provider other than Claude has accounts, each line names its provider.
 func (c *SetThresholdCommand) report() error {
-	store, err := c.accounts.Load()
+	stores, err := loadStores(c.pools)
 	if err != nil {
 		return err
 	}
-	current := store.FindAccount(store.Rotation.CurrentEmail)
-	if current == nil {
-		fmt.Fprintln(os.Stdout, "[ccswitch] no account selected; run `ccswitch enroll`")
-		return nil
-	}
 
-	if c.pendingLaunch(store, current) {
-		fmt.Fprintf(os.Stdout,
-			"[ccswitch] active account: %s (installed on next claude launch; a session is running)\n",
-			current.Email)
-		return nil
+	named := namesProviders(stores)
+	for i, store := range stores {
+		if len(store.Accounts) == 0 {
+			continue
+		}
+		reportActive(c.pools[i], store, named)
 	}
-	fmt.Fprintf(os.Stdout, "[ccswitch] active account: %s\n", current.Email)
 	return nil
 }
 
+// reportActive prints the account one provider has active, naming the provider when
+// named.
+func reportActive(pool Pool, store *entities.Store, named bool) {
+	whose := ""
+	if named {
+		whose = store.Provider.Name() + " "
+	}
+
+	current := store.FindAccount(store.Rotation.CurrentEmail)
+	if current == nil {
+		fmt.Fprintf(os.Stdout, "[ccswitch] no %saccount selected; run `ccswitch enroll`\n", whose)
+		return
+	}
+	if pendingLaunch(pool, store, current) {
+		fmt.Fprintf(os.Stdout,
+			"[ccswitch] active %saccount: %s (installed on next %s launch; a session is running)\n",
+			whose, current.Email, store.Provider.Command())
+		return
+	}
+	fmt.Fprintf(os.Stdout, "[ccswitch] active %saccount: %s\n", whose, current.Email)
+}
+
 // pendingLaunch reports whether the selected account is chosen but not yet
-// installed, which is how a switch looks while a claude session holds the old
-// credentials.
-func (c *SetThresholdCommand) pendingLaunch(
-	store *entities.Store,
-	current *entities.Account,
-) bool {
-	onDisk, identity, err := c.credentials.Read()
+// installed, which is how a switch looks while a session of the provider's CLI holds
+// the old credentials.
+func pendingLaunch(pool Pool, store *entities.Store, current *entities.Account) bool {
+	onDisk, identity, err := pool.Credentials.Read()
 	if err != nil || onDisk == nil {
 		return false
 	}

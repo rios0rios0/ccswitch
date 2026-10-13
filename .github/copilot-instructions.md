@@ -5,32 +5,42 @@
 `ccswitch` monitors Claude Code usage and rotates between enrolled backup Claude accounts when the
 active account is exhausted. It swaps the `claudeAiOauth` block of Claude Code's credential store —
 `~/.claude/.credentials.json` on Linux/Windows, the login keychain on macOS — so Claude Code
-authenticates as the next account on its next launch.
+authenticates as the next account on its next launch. It rotates the ChatGPT sign-ins of the OpenAI
+Codex CLI the same way, swapping the `tokens` of `~/.codex/auth.json`; each provider's accounts rotate
+only among themselves.
 
 ## Architecture
 
 Clean Architecture with a strict domain / infrastructure split:
 
 - `internal/domain/entities` — pure model: `Account`, `Store`, `Settings`, `Usage`, `Limit`,
-  `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`. No infrastructure imports.
+  `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`, `Provider` (Claude or Codex, with
+  a profile map of what tells them apart). No infrastructure imports.
 - `internal/domain/commands` — application logic: `EnrollAccountCommand`, `ListAccountsCommand`,
   `GetAccountCommand` (`show`), `UpdateAccountCommand`, `DeleteAccountsCommand` (`remove`),
   `ReorderAccountsCommand`, `StatusCommand`, `UseAccountCommand`, `RotateAccountCommand`,
   `EnsureActiveCommand`, `SetThresholdCommand`, `MonitorCommand`, `SelfUpdateCommand`
-  (`self-update`). Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon).
+  (`self-update`). Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon). A `Pool`
+  bundles one provider's ports; `ListAccountsCommand`, `StatusCommand`, `SetThresholdCommand` and
+  `MonitorCommand` take one per provider through `WithPool`, and the rest act on one pool.
 - `internal/domain/repositories` — ports: `AccountsRepository`, `CredentialsRepository`,
   `UsageRepository`, `TokensRepository`, `SessionsRepository`, `SelfUpdateRepository`.
 - `internal/infrastructure/repositories` — adapters: `JSONAccountsRepository` (atomic 0600 store),
   `FileCredentialsRepository` (swaps `.credentials.json`), `KeychainCredentialsRepository` (swaps the
   macOS `Claude Code-credentials` keychain item via `security`) — both patch `oauthAccount` in
   `~/.claude.json` through the shared `claudeStateFile` — `AnthropicUsageRepository`
-  (`GET /api/oauth/usage`), `AnthropicTokensRepository` (OAuth refresh), `ProcSessionsRepository`
-  (scans `/proc` for a running `claude`), `PSSessionsRepository` (reads the macOS process table),
-  `ToolhelpSessionsRepository` (walks a Windows ToolHelp32 snapshot for `claude.exe`),
+  (`GET /api/oauth/usage`), `AnthropicTokensRepository` (OAuth refresh), `CodexCredentialsRepository`
+  (swaps the ChatGPT sign-in in Codex's `auth.json`), `OpenAIUsageRepository` (`GET
+  /backend-api/wham/usage`), `OpenAITokensRepository` (OpenAI OAuth refresh), `ProcSessionsRepository`
+  (scans `/proc` for a running `claude` or `codex`), `PSSessionsRepository` (reads the macOS process
+  table), `ToolhelpSessionsRepository` (walks a Windows ToolHelp32 snapshot for `claude.exe` or
+  `codex.exe`),
   `CliforgeSelfUpdateRepository` (checks for and installs GitHub releases through the shared
   `cliforge` library).
 - `internal/infrastructure/controllers` — cobra wiring (`NewRootCommand`), including the root's
-  `--verbose`/`--version` flags and the passive update check its `PersistentPreRun` runs.
+  `--verbose`/`--version`/`--provider` flags, the passive update check its `PersistentPreRun` runs,
+  the per-provider pools `newDeps` builds, and the resolution of the provider an email names
+  (`provider_selection.go`).
 - `internal/infrastructure/services` — `DaemonService` (pidfile + detached self-exec).
 
 ## Invariants
@@ -47,6 +57,26 @@ Clean Architecture with a strict domain / infrastructure split:
   Code a token the server has forgotten. Backups poll on `backupPollInterval` rather than every tick
   because the usage endpoint rate-limits, but one whose token is expired or whose scopes are missing
   is polled at once — it is the account the next rotation installs.
+- **Each provider's accounts rotate only among themselves, in a store file of their own.** Claude's
+  accounts and the shared `Settings` stay in `store.json`; Codex's live in `store.codex.json` through
+  `JSONAccountsRepository.ForProvider`, which reads the settings from the main store and never writes
+  them. Never add a provider as a key of `store.json`: an older ccswitch — a daemon still running the
+  previous binary — rewrites it with only the keys it knows and would erase the new provider's
+  accounts. `Store.Provider` is set by the loading repository, never persisted, and its zero value is
+  Claude. Per-provider behavior and wording go through `entities.Provider`, so Claude's text stays
+  byte-for-byte what it was.
+- **The scope invariant is Claude's alone.** Commands use `store.Provider.Degraded(creds)`, never
+  `creds.Degraded()`: a Codex sign-in names no Claude scope, and treating it as degraded would spend a
+  refresh token on every poll.
+- **A Codex sign-in needs its ID token; an API-key sign-in is never replaced.** Codex cannot load an
+  `auth.json` without a parseable ID token, so `CodexCredentialsRepository.Write` refuses credentials
+  lacking one and `WithRefreshed` carries `IDToken`/`AccountID` across refreshes. The write is a
+  read-modify-write that keeps every other key; a non-ChatGPT sign-in answers `ErrCodexNotChatGPT` and
+  is never overwritten. The OpenAI token adapter refuses a refresh answered without an access token.
+- **Codex's usage is limits only.** Its windows depend on the plan (a free plan has one 30-day window),
+  so the adapter sets `Usage.LimitsOnly` and names windows by length; only the main limit's windows are
+  active, code-review and per-model limits are listed but never rotate an account, and `allowed:
+  false` sets `Usage.Blocked`, which exhausts the account whatever the threshold.
 - **Never capture blank credentials.** On `invalid_grant` Claude Code empties `claudeAiOauth` in
   place instead of removing it; capturing that replaces the account's last good tokens with the
   marker saying they are gone and flips it to `LongLived`. Guard captures with
@@ -56,7 +86,8 @@ Clean Architecture with a strict domain / infrastructure split:
   signs the user out of every authenticated MCP server on every rotation.
 - **Exhaustion is decided by the utilization percentage alone.** The endpoint's `severity` is a
   display band, not a ceiling — `critical` from about 95% with `locked_reason` still null — so
-  treating it as exhaustion capped every threshold at the point the warning fires.
+  treating it as exhaustion capped every threshold at the point the warning fires. The only other
+  trigger is a refusal (`Usage.Blocked`, from Codex's `allowed: false`), since requests then fail.
 - **The threshold comes from the store unless `--threshold` was named.** `ccswitch threshold`
   persists it so the daemon retunes without a restart, which is why `daemonArgs` must not bake
   `--threshold` in unless the caller passed it. Resolve through
@@ -66,7 +97,9 @@ Clean Architecture with a strict domain / infrastructure split:
   not mean "different account". Use `Store.MatchAccount`, which resolves by `accountUuid`/`email`
   and falls back to the refresh token only when no identity is available. Getting this wrong pins
   the store to a rotated-away token (401 on every refresh) and makes `ensure` clobber good
-  credentials with stale ones.
+  credentials with stale ones. A Codex account's `AccountUUID` is its seat,
+  `<chatgpt_user_id>__<chatgpt_account_id>` (Codex's `chatgpt_account_user_id`), since workspace
+  members share the account id.
 - **Six targets are released, so platform code must compile for all of them.** OS-specific code
   lives in `_unix.go` / `_darwin.go` / `_windows.go` pairs (`detachAttrs`/`processAlive` in
   `services`, the session and credentials adapters in `repositories`,
@@ -89,14 +122,19 @@ Clean Architecture with a strict domain / infrastructure split:
   absence erases the `mcpOAuth` tokens this guards.
 - **The Claude desktop app is not a Claude Code session.** It runs as
   `Claude.app/Contents/MacOS/Claude`, whose base name matches the CLI's under the case-insensitive
-  `matchesClaudeProcess` compare, so `PSSessionsRepository` skips executables inside `.app` bundles.
-  Counting it would hold `ClaudeRunning()` permanently true and silently disable rotation.
+  `matchesProcess` compare, so `PSSessionsRepository` skips executables inside `.app` bundles.
+  Counting it would hold `Running()` permanently true and silently disable rotation. Each provider
+  has its own probe: a running `codex` (an editor's `codex app-server` included) defers only Codex's
+  switches.
 - **Plain output never changes with the styling.** `list` and `show` decorate themselves (meters,
   columns, colors) only as `Config.Output` says; `PersistentPreRun` resolves it through `outputStyle`,
   in this order: `--color`, `FORCE_COLOR` (forces; `0`/`false` drop), `NO_COLOR` (drops),
   `CLICOLOR_FORCE` (forces), `CLICOLOR=0`/`TERM=dumb` (drop), then whether stdout is a character
   device — each variable ranked as its own specification has it. The zero `palette` is the plain style
-  and prints the pre-styling lines byte for byte, because pipes and scripts read them. Pad before
+  and prints the pre-styling lines byte for byte, because pipes and scripts read them. Providers are
+  named above their accounts (logo and brand tone on a terminal, bare name when plain); plain output
+  names them only once a non-Claude account is enrolled (`namesProviders`), so a Claude-only store
+  prints exactly what it always has. The label column widens per account to fit a model's limit. Pad before
   painting (`fmt` widths count escape codes), color figures through `Reading.Spent` so a red figure is
   exactly one that exhausts an active limit, and keep the decorated figure and meter rounding down, as
   Claude Code's `/usage` does.
@@ -113,7 +151,7 @@ Clean Architecture with a strict domain / infrastructure split:
 - **A refresh must be published back to the credential store.** ccswitch and Claude Code share one
   refresh token, and the server rotates it on every refresh — whoever refreshes second with the old
   token gets `invalid_grant`. Keeping a refreshed pair only in the ccswitch store therefore logs
-  Claude Code out. The shared `publishRefreshed` helper writes it back whenever the credential store
+  Claude Code out — and Codex likewise, whose token endpoint refuses a reused refresh token. The shared `publishRefreshed` helper writes it back whenever the credential store
   still holds the pair the refresh consumed; that guard is what keeps it from overwriting a different
   account's credentials. It is used by `monitor`, `list` and `status` alike — every command that
   polls usage can spend the refresh token.
@@ -139,6 +177,13 @@ Clean Architecture with a strict domain / infrastructure split:
   `limits[]` array with `percent`/`severity`/`is_active`/`resets_at`.
 - Refresh: `POST https://platform.claude.com/v1/oauth/token` with `grant_type=refresh_token`, the
   refresh token, and Claude Code's public `client_id`.
+- Codex usage: `GET https://chatgpt.com/backend-api/wham/usage` with `Authorization: Bearer
+  <accessToken>` and `ChatGPT-Account-Id` (read out of the access token). Returns `plan_type`,
+  `rate_limit` (`allowed`, `limit_reached`, `primary_window`/`secondary_window` with `used_percent`,
+  `limit_window_seconds`, `reset_at`), `code_review_rate_limit` and `additional_rate_limits[]`.
+- Codex refresh: `POST https://auth.openai.com/oauth/token` with a JSON body of `client_id` (the Codex
+  CLI's public one), `grant_type=refresh_token` and the refresh token; answers `access_token`,
+  `refresh_token` and, only when it minted one, `id_token`.
 
 ## Commands
 
@@ -156,8 +201,9 @@ make cross-compile  # go vet for all six released OS/arch targets
   `[ccswitch]` prefix. Log colors are not forced, because the daemon logs to a file. The colors of
   `list` and `show` come from `palette` and keep to the sixteen theme colors plus faint, with bold on
   red only (bold-as-bright terminals wash bright green, yellow and cyan out on light backgrounds).
-  `-v`/`--verbose` and `DEBUG=true` turn on debug logging, and `daemonArgs` passes `--verbose` on to
-  the daemon.
+  `-v`/`--verbose` and `DEBUG=true` turn on debug logging, and `daemonArgs` passes `--verbose` (and
+  `--codex-home`) on to the daemon. The brand tones are bright red for Claude (Claude Code's own
+  sixteen-color logo color) and magenta for Codex (its style guide's color), never bold.
 - Tests live in external `_test` packages with `// given/when/then` blocks and carry no build tags.
   No mocking library — use `test/doubles`; HTTP adapters are tested against a real `httptest.NewServer`.
 - All persistence is atomic (temp file + rename) and owner-only (0600).

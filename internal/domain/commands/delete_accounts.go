@@ -39,8 +39,8 @@ func NewDeleteAccountsCommand(
 // Removing the current account hands over to the account the monitor would pick
 // (see Store.Successor). The store is saved before that account's credentials are
 // installed, so a failed install still leaves a consistent store for `ensure` or
-// the monitor to finish from; and while a claude session is running the install
-// waits for the next launch, as any switch does.
+// the monitor to finish from; and while a session of the provider's CLI is running
+// the install waits for the next launch, as any switch does.
 func (c *DeleteAccountsCommand) Execute(emails []string) error {
 	if len(emails) == 0 {
 		return errors.New("name at least one account to remove")
@@ -95,9 +95,9 @@ func (c *DeleteAccountsCommand) handOver(store *entities.Store) error {
 	if err := c.accounts.Save(store); err != nil {
 		return err
 	}
-	if c.sessions != nil && c.sessions.ClaudeRunning() {
-		fmt.Fprintf(os.Stdout, "[ccswitch] claude is running; %s takes over on the next launch\n",
-			successor.Email)
+	if c.sessions != nil && c.sessions.Running() {
+		fmt.Fprintf(os.Stdout, "[ccswitch] %s is running; %s takes over on the next launch\n",
+			store.Provider.Command(), successor.Email)
 		return nil
 	}
 	if err := c.credentials.Write(&successor.Credentials, &successor.Identity); err != nil {

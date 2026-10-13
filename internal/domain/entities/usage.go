@@ -35,12 +35,23 @@ type Limit struct {
 	ResetsAt time.Time `json:"resetsAt"`
 }
 
-// Usage is the parsed response of the Claude usage endpoint for one account.
+// Usage is the parsed response of a usage endpoint for one account.
 type Usage struct {
 	FiveHour   Window  `json:"fiveHour"`
 	SevenDay   Window  `json:"sevenDay"`
 	Limits     []Limit `json:"limits"`
 	ExtraUsage bool    `json:"extraUsage"`
+	// LimitsOnly reports that every utilization figure is one of Limits, and that
+	// FiveHour and SevenDay mean nothing. Codex's endpoint reports usage that way: the
+	// rolling windows of an account depend on its plan (a free plan has a single
+	// 30-day one), so a window it did not report is not an empty one, and listing a
+	// 5-hour and a 7-day window at 0% would describe limits the account does not have.
+	// The zero value is the shape of Claude's endpoint, which always reports both.
+	LimitsOnly bool `json:"limitsOnly,omitempty"`
+	// Blocked reports that the endpoint refuses the account outright, whatever its
+	// percentages say. Codex answers `allowed: false` once it stops serving an account,
+	// which a workspace whose credits ran out reaches without any window being full.
+	Blocked bool `json:"blocked,omitempty"`
 }
 
 // Reading is one utilization figure worth showing for an account, a rolling
@@ -60,7 +71,18 @@ type Reading struct {
 // other limit (a weekly limit scoped to one model family, say) is listed on its
 // own whether or not it is active. It is often the one that exhausts an account,
 // and what a reader wants from it is when it resets.
+//
+// A usage reported as limits only (see LimitsOnly) has no fixed windows, so its
+// readings are its limits, in the order they were reported.
 func (u Usage) Readings() []Reading {
+	if u.LimitsOnly {
+		readings := make([]Reading, 0, len(u.Limits))
+		for _, limit := range u.Limits {
+			readings = append(readings, Reading{Kind: limit.Kind, Percent: limit.Percent, ResetsAt: limit.ResetsAt})
+		}
+		return readings
+	}
+
 	readings := []Reading{
 		u.windowReading(LimitKindSession, u.FiveHour),
 		u.windowReading(LimitKindWeeklyAll, u.SevenDay),
@@ -94,8 +116,15 @@ func (u Usage) windowReading(kind string, window Window) Reading {
 	return Reading{Kind: kind, Percent: window.Utilization, ResetsAt: window.ResetsAt}
 }
 
-// Exhausted reports whether any active limit is spent at the given threshold.
+// Exhausted reports whether any active limit is spent at the given threshold, or the
+// endpoint refuses the account outright (see Blocked).
+//
+// A refusal is not the display band the threshold must outrank (see limitSpent): it
+// means requests fail, which no tolerance the user sets can make usable.
 func (u Usage) Exhausted(thresholdPercent float64) bool {
+	if u.Blocked {
+		return true
+	}
 	for _, limit := range u.Limits {
 		if limit.IsActive && limitSpent(limit, thresholdPercent) {
 			return true
@@ -148,6 +177,10 @@ func (u Usage) BindingLimit() (Limit, bool) {
 // all of its exhausted limits have reset. Using the soonest reset would free the
 // account while a longer window (for example the weekly limit) is still
 // saturated, causing it to be selected and immediately exhausted again.
+//
+// A refusal (see Blocked) says nothing of when it ends, so an account blocked with no
+// limit over the threshold has no recovery time either, and the caller decides how
+// long to hold it.
 func (u Usage) RecoversAt(thresholdPercent float64) time.Time {
 	var latest time.Time
 	for _, limit := range u.Limits {

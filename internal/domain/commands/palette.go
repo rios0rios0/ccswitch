@@ -17,6 +17,10 @@ import (
 // Terminal and xterm show bold text in the bright variant of its color by
 // default, which washes green, yellow and cyan out on a light background but
 // leaves red readable.
+//
+// The two brand tones are the exception to naming a tone for what the text says:
+// they name whose accounts follow, in the color each assistant marks itself with on
+// a terminal of sixteen colors.
 type tone string
 
 const (
@@ -49,7 +53,30 @@ const (
 	// black", which some themes, Solarized Dark among them, paint in the color of
 	// the background.
 	toneMuted tone = "2"
+	// toneClaude marks Claude's accounts: bright red, which is how Claude Code paints
+	// its own logo when the terminal theme has sixteen colors, and which Solarized
+	// renders as the orange of Claude's brand. It is never bold, so it stays apart
+	// from an exhausted account wherever bold is not shown bright.
+	toneClaude tone = "91"
+	// toneCodex marks Codex's accounts: magenta, the color the Codex CLI's own style
+	// guide reserves for Codex.
+	toneCodex tone = "35"
 )
+
+// badge is how a decorated listing marks a provider: its logo and its tone.
+type badge struct {
+	logo  string
+	color tone
+}
+
+// providerBadges maps every provider to its badge: the teardrop-spoked asterisk
+// Claude Code greets with, and the prompt Codex opens its banner with.
+func providerBadges() map[entities.Provider]badge {
+	return map[entities.Provider]badge{
+		entities.ProviderClaude: {logo: "✻", color: toneClaude},
+		entities.ProviderCodex:  {logo: ">_", color: toneCodex},
+	}
+}
 
 const (
 	// sgrStart and sgrEnd enclose the parameters of the escape sequence that sets a
@@ -99,8 +126,19 @@ func (p palette) paint(color tone, text string) string {
 	return sgrStart + string(color) + sgrEnd + text + sgrReset
 }
 
-// heading starts an account's line: a marker on the account Claude Code runs on,
-// the account's position in the rotation order, and its email in the given tone.
+// providerName names a provider the way the style dresses names up: the logo and
+// the name in the provider's brand tone when the style is decorated, and the bare
+// name when it is plain.
+func (p palette) providerName(provider entities.Provider) string {
+	if !p.style.Decorated() {
+		return provider.Name()
+	}
+	mark := providerBadges()[provider.Resolved()]
+	return p.paint(mark.color, mark.logo+" "+provider.Name())
+}
+
+// heading starts an account's line: a marker on the account its provider's CLI runs
+// on, the account's position in the rotation order, and its email in the given tone.
 func (p palette) heading(position int, email string, active bool, color tone) string {
 	marker := " "
 	if active {
@@ -123,15 +161,15 @@ func (p palette) state(account availability, now time.Time) string {
 	return exhausted + ", available again " + p.moment(now, account.recovers)
 }
 
-// readingLine renders one utilization figure: its label and percentage, then when
-// it resets. A decorated style draws a meter between the label and the
-// percentage, colors both by how close the figure stands to the threshold, and
-// lines the countdown and the date up in columns of their own. It rounds the
-// figure down, as Claude Code's own usage screen does, so that a figure never
-// reads as the threshold before it has reached it and turned red. The plain style
-// prints the line as it always has.
-func (p palette) readingLine(reading entities.Reading, now time.Time, threshold float64) string {
-	label := fmt.Sprintf("%-*s", readingLabelWidth, readingLabel(reading.Kind))
+// readingLine renders one utilization figure: its label, padded to labelWidth
+// cells, and percentage, then when it resets. A decorated style draws a meter
+// between the label and the percentage, colors both by how close the figure stands
+// to the threshold, and lines the countdown and the date up in columns of their
+// own. It rounds the figure down, as Claude Code's own usage screen does, so that a
+// figure never reads as the threshold before it has reached it and turned red. The
+// plain style prints the line as it always has.
+func (p palette) readingLine(reading entities.Reading, now time.Time, threshold float64, labelWidth int) string {
+	label := fmt.Sprintf("%-*s", labelWidth, readingLabel(reading.Kind))
 	if !p.style.Decorated() {
 		line := fmt.Sprintf("%s%s %4.0f%%", readingIndent, label, reading.Percent)
 		if !reading.ResetsAt.IsZero() {

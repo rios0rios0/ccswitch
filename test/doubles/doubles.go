@@ -140,12 +140,13 @@ func (r *StubTokensRepository) Refresh(
 
 // StubSessionsRepository reports a fixed running state.
 type StubSessionsRepository struct {
-	Running bool
+	// Active is whether a session of the provider's CLI is running.
+	Active bool
 }
 
-// ClaudeRunning reports the configured running state.
-func (r *StubSessionsRepository) ClaudeRunning() bool {
-	return r.Running
+// Running reports the configured running state.
+func (r *StubSessionsRepository) Running() bool {
+	return r.Active
 }
 
 // StubSelfUpdateRepository is a SelfUpdateRepository double that answers with a

@@ -6,21 +6,23 @@ import (
 	"strconv"
 )
 
-// ProcSessionsRepository detects running Claude Code sessions by scanning a /proc
-// filesystem. It reports false on systems without /proc.
+// ProcSessionsRepository detects the running sessions of one CLI by scanning a
+// /proc filesystem. It reports false on systems without /proc.
 type ProcSessionsRepository struct {
 	procRoot string
+	command  string
 	selfPID  int
 }
 
-// NewProcSessionsRepository creates a repository that scans the given /proc root.
-func NewProcSessionsRepository(procRoot string) *ProcSessionsRepository {
-	return &ProcSessionsRepository{procRoot: procRoot, selfPID: os.Getpid()}
+// NewProcSessionsRepository creates a repository that scans the given /proc root
+// for processes of the CLI that runs as command, such as "claude" or "codex".
+func NewProcSessionsRepository(procRoot, command string) *ProcSessionsRepository {
+	return &ProcSessionsRepository{procRoot: procRoot, command: command, selfPID: os.Getpid()}
 }
 
-// ClaudeRunning reports whether any process other than this one has the comm name
-// "claude".
-func (r *ProcSessionsRepository) ClaudeRunning() bool {
+// Running reports whether any process other than this one has the comm name of
+// the CLI.
+func (r *ProcSessionsRepository) Running() bool {
 	entries, err := os.ReadDir(r.procRoot)
 	if err != nil {
 		return false
@@ -40,11 +42,11 @@ func (r *ProcSessionsRepository) ClaudeRunning() bool {
 	return false
 }
 
-// commMatches reports whether the process comm name identifies Claude Code.
+// commMatches reports whether the process comm name identifies the CLI.
 func (r *ProcSessionsRepository) commMatches(pid int) bool {
 	data, err := os.ReadFile(filepath.Join(r.procRoot, strconv.Itoa(pid), "comm"))
 	if err != nil {
 		return false
 	}
-	return matchesClaudeProcess(string(data))
+	return matchesProcess(string(data), r.command)
 }
