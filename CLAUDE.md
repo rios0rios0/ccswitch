@@ -30,7 +30,8 @@ Clean Architecture; the domain layer must never import infrastructure.
 - `internal/domain/entities` — pure types (`Account`, `Store`, `Settings`, `Usage`, `Limit`,
   `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`).
 - `internal/domain/commands` — one command per CLI verb (`enroll`, `list`, `show`, `update`,
-  `remove`, `reorder`, `status`, `use`, `rotate`, `ensure`, `threshold`, `monitor`, `self-update`),
+  `remove`, `reorder`, `status`, `use`, `rotate`, `ensure`, `capacity`, `threshold`, `monitor`,
+  `self-update`),
   each constructed from repository ports. `version` is printed by the controller alone.
 - `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`,
   `SelfUpdate`).
@@ -151,13 +152,22 @@ Nothing else branches on the OS; keep it that way.
   tick and `selectTarget` compares `Order` values, which is also why they must never tie.
 - **The passive update check stays off the commands nobody watches.** cliforge counts a day as
   checked only once a background lookup has answered, and starts at most five lookups a day, so a
-  command that exits before the answer arrives spends one of the five. `ensure` runs before every
-  `claude` launch and promises no network; `monitor` is the daemon, whose lookup would answer and
+  command that exits before the answer arrives spends one of the five. `ensure` and `capacity` run
+  before every `claude` launch and promise no network; `monitor` is the daemon, whose lookup would answer and
   mark the day with the notice written only to its log file; `completion` is sourced from a shell rc
   on every start and cobra's `__complete` runs on every TAB press, so either would use up the day's
   lookups before a command anyone reads gets one. `checksForUpdates` keeps them out, together with
   `version`, `self-update` and `help`; it judges a command by its ancestor directly under the root,
   because `completion bash` is named `bash`. Exempt any new command that the shell integration runs.
+- **`capacity` answers with exit status 3, and only from the store.** "No enrolled account has
+  capacity" is acted on -- the shell integration points at another model -- so it must never be a
+  misreading: every failure exits 1 (as does a ccswitch too old to know the command, which cobra
+  rejects), a Go panic exits 2, and only `commands.ErrNoCapacity` maps to `noCapacityExitCode` in
+  `controllers.ExitCode`. The command silences cobra's "Error:" line for that answer alone. It reads
+  the exhaustion markers the monitor recorded and never polls, refreshes or touches credentials,
+  because it runs before every launch next to `ensure`. When ccswitch cannot tell -- nothing
+  enrolled, nothing pollable, or a long-lived account picked with `use` -- `Store.Capacity` reports
+  capacity, for the same reason.
 - **`self-update` cannot update a running daemon.** The daemon keeps running the binary it was
   started from, and `monitor --ensure-daemon` finds it alive and leaves it be, so after an install
   `self-update` names the daemon's pid for the user to stop. Whether a release went in is read off

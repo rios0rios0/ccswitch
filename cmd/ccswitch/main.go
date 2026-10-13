@@ -23,6 +23,6 @@ func main() {
 	}
 
 	if err := controllers.NewRootCommand(version).Execute(); err != nil {
-		os.Exit(1)
+		os.Exit(controllers.ExitCode(err))
 	}
 }
