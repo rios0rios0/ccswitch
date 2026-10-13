@@ -3,6 +3,7 @@
 package controllers
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	logger "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
+	"github.com/rios0rios0/ccswitch/internal/domain/commands"
 	"github.com/rios0rios0/ccswitch/internal/domain/entities"
 	domain "github.com/rios0rios0/ccswitch/internal/domain/repositories"
 	"github.com/rios0rios0/ccswitch/internal/infrastructure/repositories"
@@ -39,13 +41,31 @@ const (
 	verboseFlag = "verbose"
 
 	ensureCommandName     = "ensure"
+	capacityCommandName   = "capacity"
 	monitorCommandName    = "monitor"
 	selfUpdateCommandName = "self-update"
 	versionCommandName    = "version"
 	// helpCommandName and completionCommandName are the commands cobra adds itself.
 	helpCommandName       = "help"
 	completionCommandName = "completion"
+
+	// noCapacityExitCode is the status `capacity` exits with when no enrolled
+	// account has capacity left. It is neither 1, which every failure exits with,
+	// nor 2, which a Go panic exits with, so the shell integration can tell the
+	// answer apart from anything that went wrong -- including a ccswitch too old to
+	// know the command, which cobra rejects with 1.
+	noCapacityExitCode = 3
 )
+
+// ExitCode returns the status ccswitch exits with for an error the root command
+// returned: noCapacityExitCode for the answer `capacity` gives when no account
+// has capacity, and 1 for every failure.
+func ExitCode(err error) int {
+	if errors.Is(err, commands.ErrNoCapacity) {
+		return noCapacityExitCode
+	}
+	return 1
+}
 
 // deps bundles the infrastructure adapters and config shared by the subcommands.
 type deps struct {
@@ -106,6 +126,7 @@ func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.
 		newRotateCommand(cfg),
 		newThresholdCommand(cfg),
 		newEnsureCommand(cfg),
+		newCapacityCommand(cfg),
 		newMonitorCommand(cfg),
 		newSelfUpdateCommand(cfg, updates),
 		newVersionCommand(version),
@@ -116,8 +137,8 @@ func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.
 // checksForUpdates reports whether running cmd also checks for a newer release.
 //
 // The commands about the version itself skip it, as does cobra's help, and so do
-// the ones whose notice nobody would read. ensure runs before every claude launch
-// and is promised to stay off the network. monitor's daemon would see its lookup
+// the ones whose notice nobody would read. ensure and capacity run before every
+// claude launch and are promised to stay off the network. monitor's daemon would see its lookup
 // answer, marking the day as checked with the warning written only to its log.
 // Shell completion runs on every shell start and TAB press and exits at once, so
 // it would use up the day's few lookups without an answer.
@@ -129,7 +150,7 @@ func checksForUpdates(cmd *cobra.Command) bool {
 	}
 	return !slices.Contains([]string{
 		versionCommandName, selfUpdateCommandName,
-		ensureCommandName, monitorCommandName,
+		ensureCommandName, capacityCommandName, monitorCommandName,
 		helpCommandName, completionCommandName, cobra.ShellCompRequestCmd,
 	}, cmd.Name())
 }

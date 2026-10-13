@@ -119,7 +119,7 @@ Clean Architecture with a strict domain / infrastructure split:
   polls usage can spend the refresh token.
 - **The passive update check stays off the commands nobody watches.** cliforge counts a day as
   checked only once a background lookup has answered, and starts at most five lookups a day.
-  `ensure` (run before every `claude` launch, promised no network), `monitor` (the daemon, whose
+  `ensure` and `capacity` (run before every `claude` launch, promised no network), `monitor` (the daemon, whose
   answered lookup would mark the day with the notice only in its log file) and `completion` and
   `__complete` (run on every shell start and TAB press) would use those lookups where no notice is
   read, so `checksForUpdates` exempts them along with `version`, `self-update` and `help`, judging a

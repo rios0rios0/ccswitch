@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -236,6 +237,38 @@ func newEnsureCommand(cfg *entities.Config) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress output on success")
+	return cmd
+}
+
+// newCapacityCommand builds the `capacity` subcommand, which tells from the store
+// alone whether an enrolled account has capacity left.
+func newCapacityCommand(cfg *entities.Config) *cobra.Command {
+	var quiet bool
+	cmd := &cobra.Command{
+		Use:   capacityCommandName,
+		Short: "Tell whether an enrolled account has capacity left (no network)",
+		Long: "Exit 0 while an enrolled account has capacity left, and exit " +
+			strconv.Itoa(noCapacityExitCode) + " once every account the rotation can select is " +
+			"exhausted, printing which one recovers first and when.\n\n" +
+			"It reads the exhaustion the monitor last recorded in the store and makes no network " +
+			"call, so a shell can run it before every claude launch. When ccswitch cannot tell -- " +
+			"nothing enrolled, nothing pollable, or a long-lived account picked with `use` -- it " +
+			"exits 0.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			deps := newDeps(cfg)
+			err := commands.NewCheckCapacityCommand(deps.accounts).
+				WithOutput(cmd.OutOrStdout()).
+				Execute(quiet)
+			if errors.Is(err, commands.ErrNoCapacity) {
+				// The answer was printed already; it is not a failure for cobra to
+				// report as "Error: ...". ExitCode maps it to its own status.
+				cmd.SilenceErrors = true
+			}
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "print nothing, and answer with the exit status alone")
 	return cmd
 }
 

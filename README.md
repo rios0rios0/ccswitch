@@ -163,6 +163,7 @@ ccswitch status                    # show the active account and its usage
 ccswitch use <email>               # manually switch accounts
 ccswitch rotate                    # rotate to the next healthy account
 ccswitch threshold 100             # set the rotation threshold, applied immediately
+ccswitch capacity                  # exit 3 when no account has capacity left (no network, see below)
 ccswitch monitor                   # run the daemon in the foreground
 ccswitch monitor --ensure-daemon   # start the daemon in the background if not running
 ccswitch self-update               # update ccswitch to the latest release (see Updating)
@@ -294,6 +295,23 @@ ccswitch use <email>     # switch to it deliberately
 
 While a long-lived account is active the monitor keeps applying the rotation policy, so it returns to a normal account as soon as one has capacity again. To make an account monitorable, log in to it with `claude` and `/login` and enroll it normally — `ccswitch` picks the full-scoped credentials back up automatically.
 
+### Checking capacity
+
+`ccswitch capacity` tells a script whether there is anything left to rotate to. It exits `0` while an
+enrolled account has capacity, and `3` once every account the rotation can select is exhausted,
+printing which one recovers first:
+
+```text
+[ccswitch] no enrolled account has capacity; backup@example.com recovers first, in 31m (Tue Sep 29 16:05)
+```
+
+It reads the exhaustion the monitor last recorded in the store and makes no network call, so it is
+cheap enough to run before every launch, and it never looks for a newer release. `--quiet` drops the
+message and leaves the answer to the exit status. When `ccswitch` cannot tell -- nothing is enrolled,
+no enrolled account can be polled, or a long-lived account was picked with `ccswitch use` -- it exits
+`0`. Every failure exits `1`, as a `ccswitch` that predates the command does, so `3` is never a
+misreading of something that went wrong.
+
 ### Important
 
 If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set in your environment, Claude Code authenticates with that key and ignores the rotated OAuth credentials. `ccswitch` warns when it detects this.
@@ -312,6 +330,17 @@ if command -v ccswitch >/dev/null 2>&1; then
 fi
 ```
 
+The wrapper can also say when there is no account left to run on, before the launch that would hit
+the limit. `ccswitch capacity` prints when the first account recovers; what to suggest meanwhile, if
+anything, is up to your shell:
+
+```bash
+ccswitch capacity 2>/dev/null
+if [ $? -eq 3 ]; then
+    echo "meanwhile, a local model runs on this machine's GPU" >&2
+fi
+```
+
 ## Architecture
 
 Clean Architecture with a domain (ports) / infrastructure (adapters) split:
@@ -322,7 +351,7 @@ ccswitch/
 └── internal/
     ├── domain/
     │   ├── entities/             # Account, Usage, Limit, RotationState, Store, Config
-    │   ├── commands/             # enroll, list, show, update, remove, reorder, status, use, rotate, threshold, ensure, monitor, self-update
+    │   ├── commands/             # enroll, list, show, update, remove, reorder, status, use, rotate, threshold, ensure, capacity, monitor, self-update
     │   └── repositories/         # ports: accounts, credentials, usage, tokens, sessions, self-update
     └── infrastructure/
         ├── controllers/          # cobra CLI wiring

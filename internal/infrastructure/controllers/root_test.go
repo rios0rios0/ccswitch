@@ -41,6 +41,7 @@ func TestRootCommandUpdateCheck(t *testing.T) {
 		{"version"},
 		{"self-update", "--dry-run"},
 		{"ensure", "--quiet"},
+		{"capacity", "--quiet"},
 		{"help"},
 		{"completion", "bash"},
 		{cobra.ShellCompRequestCmd, "li"},
