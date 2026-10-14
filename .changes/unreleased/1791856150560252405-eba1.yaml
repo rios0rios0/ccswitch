@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added `ccswitch capacity`, which exits `3` without any network call when no enrolled account has capacity left and names the account that recovers first, so a shell integration can act on it before launching `claude`'
-time: '2026-10-13T01:49:10.560188548Z'

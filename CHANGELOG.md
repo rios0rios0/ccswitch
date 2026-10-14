@@ -22,6 +22,26 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-14
+
+### Added
+
+- added `ccswitch capacity`, which exits `3` without any network call when no enrolled account has capacity left and names the account that recovers first, so a shell integration can act on it before launching `claude`
+- added colors and usage meters to `ccswitch list` on a terminal: every limit gets a bar beside its percentage, green while it is well clear of the rotation threshold, yellow from 80% of it and red once it reaches it; the reset countdowns and dates line up in columns of their own; and exhausted accounts are shown in red. `--color auto|always|never` and the `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` environment variables decide when to color, Windows consoles are switched into virtual terminal mode to render the colors, and output that is piped or redirected stays the plain text it was
+- added support for the OpenAI Codex CLI beside Claude Code: `ccswitch enroll --provider codex` captures the ChatGPT account Codex is signed in to, and from then on its accounts are listed, shown, monitored, refreshed and rotated like Claude's, each provider among its own accounts with an order, an active account and exhaustion of its own. Codex's limits come from the endpoint behind its own `/status`: the windows of its plan, named by their length (the single `30-day` window of a free plan, the `5-hour` and `7-day` windows of a paid one), which decide rotation, and its code-review and per-model limits, which are listed but never rotate an account away. A command that names an email finds the provider it is enrolled with on its own, `--provider`/`-p` names one where needed (`enroll`, `rotate`, `ensure` and `capacity` keep acting on Claude's accounts without it), and `--codex-home` points at a Codex home other than `~/.codex`. Codex's accounts are kept in `store.codex.json` beside the store, so a monitor daemon still running an older ccswitch cannot erase them, and Codex's `auth.json` is rewritten keeping every other key, never without the ID token Codex needs to load it, and never over a sign-in made with an API key
+- added the meters and colors of `ccswitch list` to `ccswitch show` on a terminal: the usage lines get the same bars, colors and columns, an exhausted account is red, the `(active)` mark green, countdowns cyan, and the credentials warning and unreadable usage yellow; output that is piped or redirected stays the plain text it was
+- added the provider of each account to `ccswitch list` and `ccswitch show`: on a terminal each provider's accounts sit under its logo and name in a color of its own, `✻ Claude` in bright red, the color Claude Code paints its own logo in on a terminal of sixteen colors, and `>_ Codex` in magenta, the color the Codex CLI reserves for Codex. Piped output names the providers only once a Codex account is enrolled, so a store of Claude accounts alone prints exactly what it did
+
+### Changed
+
+- changed the Go module `github.com/rios0rios0/cliforge` from `v0.4.7` to `v0.5.0`
+- changed the Go module `golang.org/x/sys` from `v0.48.0` to `v0.49.0`
+- changed the Go version from `1.27.1` to `1.27.2`
+
+### Fixed
+
+- fixed the help of `--threshold`, which showed `ccswitch threshold` as the name of its value instead of `percent` and pushed the description of every flag to the right
+
 ## [0.8.0] - 2026-10-07
 
 ### Added

@@ -1,3 +1,0 @@
-kind: 'Added'
-body: 'added the provider of each account to `ccswitch list` and `ccswitch show`: on a terminal each provider''s accounts sit under its logo and name in a color of its own, `✻ Claude` in bright red, the color Claude Code paints its own logo in on a terminal of sixteen colors, and `>_ Codex` in magenta, the color the Codex CLI reserves for Codex. Piped output names the providers only once a Codex account is enrolled, so a store of Claude accounts alone prints exactly what it did'
-time: '2026-10-13T03:30:35.687496286Z'
