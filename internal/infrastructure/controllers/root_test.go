@@ -149,6 +149,8 @@ func TestRootCommandHelp(t *testing.T) {
 // TestRootCommandVerbose is deliberately not parallel: the log level it asserts on
 // is process-wide, so it is restored afterwards and must not change underneath
 // other tests while they run.
+//
+//nolint:paralleltest // sets the process-wide logrus level
 func TestRootCommandVerbose(t *testing.T) {
 	t.Run("should turn on debug logging for -v", func(t *testing.T) {
 		// given
