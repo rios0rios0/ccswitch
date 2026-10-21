@@ -22,6 +22,14 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-21
+
+### Changed
+
+- changed the Go module `github.com/rios0rios0/cliforge` from `v0.5.0` to `v0.5.1`
+- changed the Go version from `1.27.2` to `1.27.3`
+- exempted the deliberately sequential `--verbose` test from the `paralleltest` linter newly enabled by the shared golangci-lint configuration
+
 ## [0.9.0] - 2026-10-14
 
 ### Added
