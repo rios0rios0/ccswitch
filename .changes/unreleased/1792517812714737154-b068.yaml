@@ -1,3 +1,0 @@
-kind: 'Changed'
-body: 'exempted the deliberately sequential `--verbose` test from the `paralleltest` linter newly enabled by the shared golangci-lint configuration'
-time: '2026-10-20T17:36:52.714698869Z'
