@@ -19,8 +19,8 @@ Clean Architecture with a strict domain / infrastructure split:
 - `internal/domain/commands` — application logic: `EnrollAccountCommand`, `ListAccountsCommand`,
   `GetAccountCommand` (`show`), `UpdateAccountCommand`, `DeleteAccountsCommand` (`remove`),
   `ReorderAccountsCommand`, `StatusCommand`, `UseAccountCommand`, `RotateAccountCommand`,
-  `EnsureActiveCommand`, `SetThresholdCommand`, `MonitorCommand`, `SelfUpdateCommand`
-  (`self-update`). Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon). A `Pool`
+  `EnsureActiveCommand`, `CheckCapacityCommand` (`capacity`), `SetThresholdCommand`,
+  `MonitorCommand`, `SelfUpdateCommand` (`self-update`). Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon). A `Pool`
   bundles one provider's ports; `ListAccountsCommand`, `StatusCommand`, `SetThresholdCommand` and
   `MonitorCommand` take one per provider through `WithPool`, and the rest act on one pool.
 - `internal/domain/repositories` — ports: `AccountsRepository`, `CredentialsRepository`,
@@ -162,6 +162,11 @@ Clean Architecture with a strict domain / infrastructure split:
   `__complete` (run on every shell start and TAB press) would use those lookups where no notice is
   read, so `checksForUpdates` exempts them along with `version`, `self-update` and `help`, judging a
   command by its ancestor directly under the root.
+- **`capacity` answers with exit status 3, and only from the store.** The shell integration acts on
+  "no enrolled account has capacity", so only `commands.ErrNoCapacity` maps to `noCapacityExitCode`
+  in `controllers.ExitCode`; every failure exits 1 and a panic 2. It reads the exhaustion markers the
+  monitor recorded and never polls, refreshes or touches credentials, since it runs before every
+  launch. When ccswitch cannot tell, `Store.Capacity` reports capacity.
 - **`self-update` cannot update a running daemon.** The daemon keeps running the binary it started
   from and `--ensure-daemon` leaves a live one be, so after an install `self-update` names the
   daemon's pid for the user to stop. An install is detected with `os.SameFile` on the executable
@@ -204,7 +209,8 @@ make cross-compile  # go vet for all six released OS/arch targets
   `-v`/`--verbose` and `DEBUG=true` turn on debug logging, and `daemonArgs` passes `--verbose` (and
   `--codex-home`) on to the daemon. The brand tones are bright red for Claude (Claude Code's own
   sixteen-color logo color) and magenta for Codex (its style guide's color), never bold.
-- Tests live in external `_test` packages with `// given/when/then` blocks and carry no build tags.
+- Tests live in external `_test` packages with `// given/when/then` blocks and carry no build tags
+  beyond the OS constraints platform tests need (`//go:build !windows`, `darwin`, `windows`).
   No mocking library — use `test/doubles`; HTTP adapters are tested against a real `httptest.NewServer`.
 - All persistence is atomic (temp file + rename) and owner-only (0600).
 
