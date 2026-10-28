@@ -7,7 +7,7 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 
 ## Prerequisites
 
-- Go 1.26+
+- Go 1.27+
 - [Make](https://www.gnu.org/software/make/)
 - [chlog](https://github.com/luizjhonata/chlog) (`go install github.com/luizjhonata/chlog@latest`)
 
@@ -41,7 +41,7 @@ development practices, refer to the **[Development Guide](https://github.com/rio
 - Infrastructure adapters (`internal/infrastructure`) implement the ports over the filesystem and HTTP.
 - Unit tests use hand-rolled in-memory doubles (`test/doubles`); no mocking library is used. HTTP
   adapters are tested against a real `httptest.NewServer`.
-- OS-specific code belongs in a `_unix.go` / `_windows.go` pair behind a shared, portable function;
+- OS-specific code belongs in a `_unix.go` / `_darwin.go` / `_windows.go` pair behind a shared, portable function;
   nothing else may branch on the operating system. Binaries are released for Linux, macOS, and
   Windows on amd64 and arm64, and a Windows-only compile error breaks the entire release.
 - Every pull request also runs the whole test suite on Windows. A test of something Windows does
