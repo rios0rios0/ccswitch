@@ -120,8 +120,8 @@ Nothing else branches on the OS; keep it that way.
   `chatgpt_account_user_id` claim has it: every member of a workspace shares the account id, so the
   account id alone would match two people's seats to one enrolled account.
 - **Six targets are released, so platform code must compile for all of them.** `make cross-compile`
-  type-checks linux/darwin/windows × amd64/arm64, and the workflow runs the same matrix on every
-  pull request. Skipping it is how `Setsid` — which does not exist on Windows — reached delivery and
+  type-checks linux/darwin/windows × amd64/arm64, and the workflow runs the same six targets, in one
+  job, on every pull request. Skipping it is how `Setsid` — which does not exist on Windows — reached delivery and
   left every release up to 0.2.2 with zero published binaries. The workflow also runs the whole test
   suite on Windows (`tests > test:windows`), so a test asserting something Windows does not have,
   such as Unix mode bits, belongs in a `_unix_test.go` file behind `//go:build !windows`.

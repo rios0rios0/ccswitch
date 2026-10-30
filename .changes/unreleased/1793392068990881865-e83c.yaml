@@ -1,0 +1,3 @@
+kind: 'Changed'
+body: 'changed the cross-compile check and the Windows test run into inputs of the shared Go pipeline (`cross_compile`, `extra_test_*`), so they run inside its stages -- `code-check > quality:cross-compile` as one job for the six targets, `tests > test:windows` in the tests stage -- instead of as seven jobs of their own that started at once, beside the first stage, and that delivery never waited for'
+time: '2026-10-30T20:27:48.990818997Z'
