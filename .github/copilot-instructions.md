@@ -106,7 +106,7 @@ Clean Architecture with a strict domain / infrastructure split:
   `newSessionsRepository`/`newCredentialsRepository` and `consoleStyle`, which switches a Windows
   console into virtual terminal processing for colors, in `controllers`); nothing else branches on the
   OS. `make cross-compile` type-checks linux/darwin/windows × amd64/arm64 and the workflow runs the
-  same matrix per pull request — skipping it is how `Setsid` (absent on Windows) reached delivery
+  same six targets, in one job, on every pull request — skipping it is how `Setsid` (absent on Windows) reached delivery
   and left every release up to 0.2.2 with zero published binaries. Note that `make lint` only covers
   the host OS, so run it with `GOOS=darwin` / `GOOS=windows` after touching platform-specific code.
   The workflow also runs every test on Windows (`tests > test:windows`); a test of something Windows

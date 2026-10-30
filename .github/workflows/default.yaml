@@ -17,66 +17,26 @@ permissions:
   contents: 'write' # delivery-release
 
 jobs:
+  # One pipeline, its stages run one after another. The two checks ccswitch needs beyond the
+  # shared ones run INSIDE it, through its inputs, rather than as jobs of their own here: a job
+  # beside the call can only wait for the whole called workflow, so it used to start at once,
+  # beside the first stage, and delivery never waited for it.
   default:
     uses: 'rios0rios0/pipelines/.github/workflows/go-binary.yaml@main'
     with:
       binary_name: 'ccswitch'
-
-  # ccswitch ships binaries for six OS/arch pairs, and platform-specific code
-  # (process detachment, liveness probing, session detection) only fails to
-  # compile on the platform it is written for. The shared `go-binary.yaml` does
-  # not expose the `cross_compile` input that `go.yaml` gates this check behind,
-  # so it is wired here directly: without it, a Windows-only compile error stays
-  # invisible until GoReleaser hits it during delivery — which is exactly how
-  # every release up to 0.2.2 ended up publishing no binaries at all.
-  cross-compile:
-    name: 'code-check > quality:cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})'
-    runs-on: 'ubuntu-latest'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: 'linux'
-            goarch: 'amd64'
-          - goos: 'linux'
-            goarch: 'arm64'
-          - goos: 'darwin'
-            goarch: 'amd64'
-          - goos: 'darwin'
-            goarch: 'arm64'
-          - goos: 'windows'
-            goarch: 'amd64'
-          - goos: 'windows'
-            goarch: 'arm64'
-    steps:
-      # Tracks @main deliberately, like every other reference to the pipelines
-      # repository in this workflow: it is first-party and shared, and pinning a
-      # commit here would freeze this one check while the rest of the pipeline
-      # keeps moving.
-      # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
-      - uses: 'rios0rios0/pipelines/github/golang/stages/10-code-check/cross-compile@main'
-        with:
-          goos: '${{ matrix.goos }}'
-          goarch: '${{ matrix.goarch }}'
-
-  # The shared pipeline runs the tests on Linux only, and the cross-compile job
-  # above only type-checks the other targets. Windows is where ccswitch behaves
-  # most differently — the ToolHelp32 session probe, process detachment and
-  # liveness, the self-update swap of a running .exe — and only a run there shows
-  # it. `go test` runs directly because the pipeline's test scripts are POSIX
-  # shell; the Linux job still owns coverage and the published reports.
-  tests-windows:
-    name: 'tests > test:windows'
-    runs-on: 'windows-latest'
-    timeout-minutes: 20
-    permissions:
-      contents: 'read'
-    if: "!startsWith(github.ref, 'refs/tags/')"
-    steps:
-      - uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' # v7.0.1
-      - uses: 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e' # v7.0.0
-        with:
-          go-version-file: 'go.mod'
-          cache-dependency-path: 'go.sum'
-      - name: 'Run the tests'
-        run: 'go test -count=1 ./...'
+      # ccswitch ships binaries for six OS/arch pairs, and platform-specific code (process
+      # detachment, liveness probing, session detection) only fails to compile on the platform
+      # it is written for. Without this check a Windows-only compile error stays invisible until
+      # GoReleaser hits it during delivery -- which is exactly how every release up to 0.2.2
+      # ended up publishing no binaries at all. One job, `code-check > quality:cross-compile`,
+      # type-checks all six targets.
+      cross_compile: true
+      # The shared pipeline runs the tests on Linux only, and the cross-compile check only
+      # type-checks the other targets. Windows is where ccswitch behaves most differently -- the
+      # ToolHelp32 session probe, process detachment and liveness, the self-update swap of a
+      # running .exe -- and only a run there shows it. It runs as `tests > test:windows` in the
+      # tests stage; the Linux `test:all` still owns coverage and the published reports.
+      extra_test_name: 'windows'
+      extra_test_command: 'go test -count=1 ./...'
+      extra_test_runs_on: '["windows-latest"]'
