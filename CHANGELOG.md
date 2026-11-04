@@ -22,6 +22,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-04
+
+### Changed
+
+- changed the cross-compile check and the Windows test run into inputs of the shared Go pipeline (`cross_compile`, `extra_test_*`), so they run inside its stages -- `code-check > quality:cross-compile` as one job for the six targets, `tests > test:windows` in the tests stage -- instead of as seven jobs of their own that started at once, beside the first stage, and that delivery never waited for
+- changed the Go module `github.com/rios0rios0/cliforge` from `v0.5.1` to `v0.5.2`
+- changed the Go module `go.yaml.in/yaml/v3` from `v3.0.5` to `v3.0.6`
+- moved the agent instructions from `CLAUDE.md` to `AGENTS.md`, keeping a `CLAUDE.md` that imports it
+- refreshed `.github/copilot-instructions.md`, the code-review skill and `CONTRIBUTING.md` to list the `capacity` command and its exit-status invariant, allow the OS build constraints platform tests carry, point at `AGENTS.md` instead of `CLAUDE.md`, and require Go 1.27
+
 ## [0.9.1] - 2026-10-21
 
 ### Changed
