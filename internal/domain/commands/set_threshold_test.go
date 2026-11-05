@@ -120,6 +120,53 @@ func TestSetThresholdCommandExecute(t *testing.T) {
 		assert.Equal(t, "b", credentials.Written.AccessToken)
 	})
 
+	t.Run("should keep an account pinned by hand that is still below the new threshold", func(t *testing.T) {
+		t.Parallel()
+		// given: raising the threshold clears the primary, which would otherwise take over
+		store := pinnedBackupStore()
+		store.Rotation.MarkExhausted("a@example.com", time.Now().Add(longRecovery))
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := installedCreds("b", "b@example.com")
+		usage := perAccountUsage(map[string]*entities.Usage{
+			"a": borderlineUsage(),
+			"b": healthyUsage(),
+		})
+		command := newCommand(monitorConfig(), accounts, credentials, usage,
+			&doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Execute(raisedThreshold)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.True(t, accounts.Store.Rotation.Pinned())
+		assert.Zero(t, credentials.WriteCalls)
+	})
+
+	t.Run("should release an account pinned by hand that the new threshold spends", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: pinnedBackupStore()}
+		credentials := installedCreds("b", "b@example.com")
+		usage := perAccountUsage(map[string]*entities.Usage{
+			"a": healthyUsage(),
+			"b": borderlineUsage(),
+		})
+		command := newCommand(monitorConfig(), accounts, credentials, usage,
+			&doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Execute(borderlinePct - 1)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.False(t, accounts.Store.Rotation.Pinned())
+		require.NotNil(t, credentials.Written)
+		assert.Equal(t, "a", credentials.Written.AccessToken)
+	})
+
 	t.Run("should defer the switch while a claude session is running", func(t *testing.T) {
 		t.Parallel()
 		// given

@@ -32,11 +32,11 @@ Clean Architecture; the domain layer must never import infrastructure.
 - `internal/domain/entities` — pure types (`Account`, `Store`, `Settings`, `Usage`, `Limit`,
   `RotationState`, `Config`, `OAuthCredentials`, `AccountIdentity`, `Provider`).
 - `internal/domain/commands` — one command per CLI verb (`enroll`, `list`, `show`, `update`,
-  `remove`, `reorder`, `status`, `use`, `rotate`, `ensure`, `capacity`, `threshold`, `monitor`,
-  `self-update`),
+  `remove`, `reorder`, `status`, `use`, `unpin`, `rotate`, `ensure`, `capacity`, `threshold`,
+  `monitor`, `self-update`),
   each constructed from repository ports. `version` is printed by the controller alone. A `Pool`
-  bundles one provider's ports; `list`, `status`, `threshold` and `monitor` take one per provider
-  (`WithPool`), the rest act on the pool of one.
+  bundles one provider's ports; `list`, `status`, `unpin`, `threshold` and `monitor` take one per
+  provider (`WithPool`), the rest act on the pool of one.
 - `internal/domain/repositories` — ports (`Accounts`, `Credentials`, `Usage`, `Tokens`, `Sessions`,
   `SelfUpdate`).
 - `internal/infrastructure/repositories` — adapters: JSON store (`JSONAccountsRepository`, whose
@@ -197,8 +197,9 @@ Nothing else branches on the OS; keep it that way.
   Claude's accounts unless `--provider` names another, since the shell integration calls them that
   way; commands that name an email find its provider on their own (`providerOf`) and ask for
   `--provider` only when the email is enrolled with both; `reorder` orders one provider's accounts at
-  a time; `list` and `status` show every provider unless one is named; `threshold` and `monitor`
-  always cover all of them. `daemonArgs` passes `--codex-home` on to the daemon, like the Claude paths.
+  a time; `list`, `status` and `unpin` cover every provider unless one is named; `threshold` and
+  `monitor` always cover all of them. `daemonArgs` passes `--codex-home` on to the daemon, like the
+  Claude paths.
 - **Long-lived tokens cannot be polled.** Tokens from `claude setup-token` lack the `user:profile`
   scope that `GET /api/oauth/usage` requires (403), so such accounts are flagged `LongLived` and
   gated by `Account.SupportsUsagePolling`. Never poll them or select them automatically — they are a
@@ -209,6 +210,18 @@ Nothing else branches on the OS; keep it that way.
   naming the same account — while the CLI counts positions from 1 for the primary (`Store.Position`,
   `entities.ParsePriority`). Reordering touches no credentials: the monitor reloads the store every
   tick and `selectTarget` compares `Order` values, which is also why they must never tie.
+- **An account picked by hand stays until it is exhausted.** `use` and `rotate` pin the account they
+  install (`RotationState.Pin`), and `reconcile` keeps a pinned account active while it has capacity,
+  whatever `selectTarget` would prefer; once a poll finds it exhausted, the pin is released and the
+  policy picks the next account as it would have. Without the pin, `--prefer-primary` moved every pick
+  back to the primary on the next tick — recorded for the next launch while a session ran, which the
+  shell wrapper's `ensure` then installed — so `ccswitch use` lasted one poll. A pin names the current
+  account or nothing (`RotationState.Pinned` compares the two): every switch the policy makes goes
+  through `RotationState.Select`, which releases it, and `Store.Remove` drops a pin on the account it
+  removes, so a pin never follows the policy's choice nor comes back into force on its own. Never
+  assign `Rotation.CurrentEmail` directly. A long-lived account cannot be polled, so its pin lasts
+  until a person picks again or runs `unpin`, which releases the pins and re-applies the policy
+  through a monitor tick, as `threshold` does.
 - **The passive update check stays off the commands nobody watches.** cliforge counts a day as
   checked only once a background lookup has answered, and starts at most five lookups a day, so a
   command that exits before the answer arrives spends one of the five. `ensure` and `capacity` run

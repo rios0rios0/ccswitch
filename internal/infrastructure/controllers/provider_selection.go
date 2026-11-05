@@ -12,8 +12,8 @@ const (
 	// providerFlag names the flag that picks which provider's accounts a command acts on.
 	providerFlag  = "provider"
 	providerUsage = "the provider to act on, claude or codex: enroll, rotate, ensure and capacity act on claude " +
-		"without it, an enrolled email is found under its provider, list and status show both unless it is " +
-		"given, and threshold and monitor always cover both"
+		"without it, an enrolled email is found under its provider, list, status and unpin cover both unless " +
+		"it is given, and threshold and monitor always cover both"
 	// codexHomeFlag names the flag that points at Codex's home directory.
 	codexHomeFlag = "codex-home"
 )

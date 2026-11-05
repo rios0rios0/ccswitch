@@ -124,8 +124,12 @@ func (c *GetAccountCommand) printSummary(
 	}
 
 	heading := look.paint(color, account.Email)
-	if account.Email == store.Rotation.CurrentEmail {
+	part := standingOf(store, account.Email)
+	if part != standingIdle {
 		heading += " " + look.paint(toneActive, "(active)")
+	}
+	if part == standingPinned {
+		heading += " " + look.pinned()
 	}
 	fmt.Fprintln(c.out, heading)
 	if look.style.Decorated() || store.Provider.Resolved() != entities.ProviderClaude {

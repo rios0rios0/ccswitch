@@ -86,6 +86,7 @@ them before the generic ones.
 - **The scope repair is Claude's alone.** Commands must decide it through `store.Provider.Degraded(creds)`. Calling `creds.Degraded()` on a Codex sign-in, which names no Claude scope, refreshes it on every poll.
 - **Codex's `auth.json` is a read-modify-write that keeps the ID token.** Codex cannot load a sign-in without its ID token, so a write without one, a refresh merge that drops it, or a write over an API-key sign-in (`ErrCodexNotChatGPT`) signs the user out of Codex or undoes a deliberate choice. **Critical.**
 - **Claude's wording and plain output stay byte-for-byte.** Provider-specific text goes through `entities.Provider`; plain `list`/`status`/`show` output names providers only once a non-Claude account exists. A change that alters what a Claude-only store prints breaks the scripts that read it.
+- **An account picked by hand stays until it is exhausted.** `use` and `rotate` pin it (`RotationState.Pin`) and `reconcile` keeps it while it has capacity; every switch the policy makes goes through `RotationState.Select`, which releases the pin. A change that assigns `Rotation.CurrentEmail` directly either moves a pin onto an account nobody picked or lets the monitor undo the user's pick on its next poll — the bug pins exist to fix.
 - User-facing output goes to `os.Stdout`/`os.Stderr` with a `[ccswitch]` prefix; diagnostics go through Logrus aliased as `logger`. Do not mix the two.
 
 ### Commands a reviewer should be able to quote

@@ -90,6 +90,25 @@ func livePairStore() *entities.Store {
 	return store
 }
 
+// pinnedBackupStore returns livePairStore with the backup "b" picked by hand: current
+// and pinned, while the primary "a" outranks it.
+func pinnedBackupStore() *entities.Store {
+	store := livePairStore()
+	store.Rotation.Pin("b@example.com")
+	return store
+}
+
+// installedCreds returns a credentials store holding the live pair of the account
+// whose tokens are named after token ("b" and "rb" for "b"), identified by its email.
+func installedCreds(token, email string) *doubles.StubCredentialsRepository {
+	return &doubles.StubCredentialsRepository{
+		Creds: &entities.OAuthCredentials{
+			AccessToken: token, RefreshToken: "r" + token, ExpiresAt: farFuture, Scopes: loginScopes(),
+		},
+		Identity: &entities.AccountIdentity{EmailAddress: email},
+	}
+}
+
 // threeAccountStore returns livePairStore with a third live account "c" at the
 // end of the rotation order.
 func threeAccountStore() *entities.Store {

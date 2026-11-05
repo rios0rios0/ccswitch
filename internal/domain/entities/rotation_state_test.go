@@ -84,3 +84,90 @@ func TestRotationStateMarkAndClear(t *testing.T) {
 		assert.Contains(t, state.ExhaustedUntil, "active@example.com")
 	})
 }
+
+func TestRotationStatePin(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should make the account current and pinned when a person pins it", func(t *testing.T) {
+		t.Parallel()
+		// given
+		state := entities.RotationState{CurrentEmail: "a@example.com"}
+
+		// when
+		state.Pin("b@example.com")
+
+		// then
+		assert.Equal(t, "b@example.com", state.CurrentEmail)
+		assert.Equal(t, "b@example.com", state.PinnedEmail)
+		assert.True(t, state.Pinned())
+	})
+
+	t.Run("should release the pin and keep the current account when unpinned", func(t *testing.T) {
+		t.Parallel()
+		// given
+		state := entities.RotationState{}
+		state.Pin("b@example.com")
+
+		// when
+		state.Unpin()
+
+		// then
+		assert.Equal(t, "b@example.com", state.CurrentEmail)
+		assert.Empty(t, state.PinnedEmail)
+		assert.False(t, state.Pinned())
+	})
+
+	t.Run("should release the pin when the rotation policy selects an account", func(t *testing.T) {
+		t.Parallel()
+		// given
+		state := entities.RotationState{}
+		state.Pin("b@example.com")
+
+		// when
+		state.Select("a@example.com")
+
+		// then: the pin must not follow the policy's choice, nor survive to come back
+		// into force should the policy return to the pinned account later
+		assert.Equal(t, "a@example.com", state.CurrentEmail)
+		assert.Empty(t, state.PinnedEmail)
+		assert.False(t, state.Pinned())
+	})
+
+	t.Run("should leave no account current when the rotation policy selects none", func(t *testing.T) {
+		t.Parallel()
+		// given
+		state := entities.RotationState{}
+		state.Pin("b@example.com")
+
+		// when
+		state.Select("")
+
+		// then
+		assert.Empty(t, state.CurrentEmail)
+		assert.False(t, state.Pinned())
+	})
+
+	t.Run("should not count a pin on an account other than the current one", func(t *testing.T) {
+		t.Parallel()
+		// given: a pin left behind on an account that is no longer current
+		state := entities.RotationState{CurrentEmail: "a@example.com", PinnedEmail: "b@example.com"}
+
+		// when
+		pinned := state.Pinned()
+
+		// then
+		assert.False(t, pinned)
+	})
+
+	t.Run("should pin nothing in a store written before pins existed", func(t *testing.T) {
+		t.Parallel()
+		// given
+		state := entities.RotationState{CurrentEmail: "a@example.com"}
+
+		// when
+		pinned := state.Pinned()
+
+		// then
+		assert.False(t, pinned)
+	})
+}

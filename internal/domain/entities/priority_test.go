@@ -403,6 +403,36 @@ func TestStoreRemove(t *testing.T) {
 		assert.False(t, removed)
 		assert.Len(t, store.Accounts, enrolled)
 	})
+
+	t.Run("should drop a pin on the removed account", func(t *testing.T) {
+		t.Parallel()
+		// given
+		store := threeAccountStore()
+		store.Rotation.Pin(secondEmail)
+
+		// when
+		removed := store.Remove(secondEmail)
+
+		// then: a pin left behind would come back into force should the same email be
+		// enrolled again and rotated to
+		assert.True(t, removed)
+		assert.Empty(t, store.Rotation.PinnedEmail)
+	})
+
+	t.Run("should keep the pin when another account is removed", func(t *testing.T) {
+		t.Parallel()
+		// given
+		store := threeAccountStore()
+		store.Rotation.Pin(secondEmail)
+
+		// when
+		removed := store.Remove(thirdEmail)
+
+		// then
+		assert.True(t, removed)
+		assert.True(t, store.Rotation.Pinned())
+		assert.Equal(t, secondEmail, store.Rotation.CurrentEmail)
+	})
 }
 
 func TestStoreSuccessor(t *testing.T) {

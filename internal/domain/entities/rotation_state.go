@@ -2,11 +2,45 @@ package entities
 
 import "time"
 
-// RotationState records which account is currently active and when exhausted
-// accounts are expected to become usable again.
+// RotationState records which account is currently active, whether a person pinned
+// it there, and when exhausted accounts are expected to become usable again.
 type RotationState struct {
-	CurrentEmail   string               `json:"currentEmail"`
+	CurrentEmail string `json:"currentEmail"`
+	// PinnedEmail is the account a person picked by hand, with `ccswitch use` or
+	// `ccswitch rotate`. While it is the current account the rotation policy keeps it
+	// active for as long as it has capacity, even when an account of higher priority
+	// has more, so the choice outlives the monitor's next poll. It names the current
+	// account or nothing: every switch the policy makes goes through Select, which
+	// releases it. Empty, as in every store written before pins existed, it pins
+	// nothing.
+	PinnedEmail    string               `json:"pinnedEmail,omitempty"`
 	ExhaustedUntil map[string]time.Time `json:"exhaustedUntil,omitempty"`
+}
+
+// Pin makes the account current and pins it there, which is what picking it by hand
+// does: the rotation policy keeps it active until it is exhausted or the pin is
+// released.
+func (s *RotationState) Pin(email string) {
+	s.CurrentEmail = email
+	s.PinnedEmail = email
+}
+
+// Select makes the account current as the rotation policy's choice, or leaves no
+// account current for an empty email. It releases any pin, since the account a person
+// picked is no longer the one in use.
+func (s *RotationState) Select(email string) {
+	s.CurrentEmail = email
+	s.PinnedEmail = ""
+}
+
+// Pinned reports whether a person pinned the current account.
+func (s *RotationState) Pinned() bool {
+	return s.PinnedEmail != "" && s.PinnedEmail == s.CurrentEmail
+}
+
+// Unpin releases the pin, leaving the current account to the rotation policy.
+func (s *RotationState) Unpin() {
+	s.PinnedEmail = ""
 }
 
 // IsExhausted reports whether the account is marked exhausted at the given time.

@@ -136,10 +136,14 @@ func (s *Store) Reorder(emails []string) error {
 	return nil
 }
 
-// Remove unenrolls the account: it drops the account and its exhaustion marker
-// and closes the gap it leaves in the rotation order. It reports whether such an
-// account was enrolled. The current-account pointer is left to the caller, which
-// decides who takes over (see Successor).
+// Remove unenrolls the account: it drops the account, its exhaustion marker and a
+// pin on it, and closes the gap it leaves in the rotation order. It reports whether
+// such an account was enrolled. The current-account pointer is left to the caller,
+// which decides who takes over (see Successor).
+//
+// A pin is dropped with its account so that it can never come back into force: left
+// behind, it would pin the account again the moment the same email were enrolled
+// anew and rotated to.
 func (s *Store) Remove(email string) bool {
 	index := slices.IndexFunc(s.Accounts, func(account Account) bool {
 		return account.Email == email
@@ -150,6 +154,9 @@ func (s *Store) Remove(email string) bool {
 
 	s.Accounts = slices.Delete(s.Accounts, index, index+1)
 	s.Rotation.ClearExhausted(email)
+	if s.Rotation.PinnedEmail == email {
+		s.Rotation.Unpin()
+	}
 	s.renumber(s.Ordered())
 	return true
 }

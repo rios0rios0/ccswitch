@@ -29,7 +29,8 @@ func newThresholdCommand(cfg *entities.Config) *cobra.Command {
 			"A threshold set here is persisted in the store, so a running monitor daemon " +
 			"picks it up on its next tick without being restarted, and it is applied " +
 			"immediately: every account of every provider is repolled and the highest-priority " +
-			"one of each whose utilization is below the new threshold becomes active.",
+			"one of each whose utilization is below the new threshold becomes active -- unless " +
+			"the active one was pinned with `use` or `rotate` and is still below it, which stays.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			command := newSetThresholdCommand(newDeps(cfg))
@@ -128,7 +129,8 @@ func newUpdateCommand(cfg *entities.Config, provider *providerValue) *cobra.Comm
 			"With --prefer-primary (the default) the monitor always runs on the highest-priority " +
 			"account that has capacity, so a running daemon switches to an account moved above the " +
 			"active one on its next poll, and away from the active one when it is moved below an " +
-			"account with capacity.",
+			"account with capacity. An account pinned with `use` or `rotate` is the exception: it " +
+			"stays active wherever it is moved, until it is exhausted or `ccswitch unpin` releases it.",
 		Example: "  ccswitch update backup@example.com --priority top\n" +
 			"  ccswitch update backup@example.com --priority 2\n" +
 			"  ccswitch update backup@example.com --priority down",
@@ -253,16 +255,53 @@ func newStatusCommand(cfg *entities.Config, provider *providerValue) *cobra.Comm
 func newUseCommand(cfg *entities.Config, provider *providerValue) *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <email>",
-		Short: "Switch the active account of the email's provider to that enrolled account",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		Short: "Switch the active account of the email's provider to that enrolled account, and pin it there",
+		Long: "Install the named account's credentials and make it the active account of its provider.\n\n" +
+			"The account is pinned: the monitor keeps it active while it has capacity, even when an " +
+			"account of higher priority has more; once it is exhausted, the monitor releases the pin " +
+			"and rotates on as usual. An account enrolled from a long-lived token cannot be polled, so " +
+			"ccswitch never sees it run out: it stays until another account is picked. " +
+			"`ccswitch unpin` lets the rotation policy choose again.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			deps := newDeps(cfg)
 			owner, err := providerOf(deps, provider, args[0])
 			if err != nil {
 				return err
 			}
 			pool := deps.pool(owner)
-			return commands.NewUseAccountCommand(pool.Accounts, pool.Credentials).Execute(args[0])
+			return commands.NewUseAccountCommand(pool.Accounts, pool.Credentials).
+				WithOutput(cmd.OutOrStdout()).
+				WithErrorOutput(cmd.ErrOrStderr()).
+				Execute(args[0])
+		},
+	}
+}
+
+// newUnpinCommand builds the `unpin` subcommand, which hands the choice of account
+// back to the rotation policy.
+func newUnpinCommand(cfg *entities.Config, provider *providerValue) *cobra.Command {
+	return &cobra.Command{
+		Use:   "unpin",
+		Short: "Release the account picked with use or rotate, so the rotation policy chooses again",
+		Long: "An account picked with `ccswitch use` or `ccswitch rotate` is pinned: the monitor keeps " +
+			"it active while it has capacity, even when an account of higher priority has more, and " +
+			"releases the pin once it is exhausted. unpin releases it now -- for every provider, or " +
+			"for the one --provider names -- and applies the rotation policy at once: with " +
+			"--prefer-primary (the default) the highest-priority account that has capacity becomes " +
+			"active, installed on the next launch while a session of its provider's CLI is running.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			deps := newDeps(cfg)
+			pools := deps.orderedPools(provider.listed())
+			command := commands.NewUnpinAccountCommand(
+				deps.config, pools[0].Accounts, pools[0].Credentials, pools[0].Usage, pools[0].Tokens,
+				pools[0].Sessions,
+			).WithOutput(cmd.OutOrStdout())
+			for _, pool := range pools[1:] {
+				command.WithPool(pool)
+			}
+			return command.Execute()
 		},
 	}
 }
@@ -273,6 +312,11 @@ func newRotateCommand(cfg *entities.Config, provider *providerValue) *cobra.Comm
 	cmd := &cobra.Command{
 		Use:   "rotate",
 		Short: "Rotate to the next healthy backup account (Claude's, or --provider codex for Codex's)",
+		Long: "Switch to the next account after the active one, in the rotation order, that has " +
+			"capacity -- Claude's, or Codex's with --provider codex -- and pin it there, as `use` " +
+			"does: the monitor keeps it active until it is exhausted, and `ccswitch unpin` lets the " +
+			"rotation policy choose again. While a session of the provider's CLI is running the " +
+			"switch waits for its next launch, unless --force is given.",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			pool := newDeps(cfg).pool(provider.orDefault())
 			return commands.NewRotateAccountCommand(pool.Accounts, pool.Credentials, pool.Sessions).Execute(force)

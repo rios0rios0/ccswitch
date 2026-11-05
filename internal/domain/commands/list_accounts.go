@@ -143,11 +143,11 @@ func (c *ListAccountsCommand) printAccount(
 	threshold float64,
 ) bool {
 	look := c.palette()
-	active := account.Email == store.Rotation.CurrentEmail
+	part := standingOf(store, account.Email)
 
 	if !account.SupportsUsagePolling() {
 		fmt.Fprintf(c.out, "%s [%s] %s\n",
-			look.heading(position, account.Email, active, toneStrong),
+			look.heading(position, account.Email, part, toneStrong),
 			look.paint(toneManual, "manual only"),
 			look.paint(toneMuted, "long-lived token; its usage cannot be polled"))
 		return false
@@ -161,22 +161,23 @@ func (c *ListAccountsCommand) printAccount(
 	refreshed := captureRefreshed(pool.Credentials, store, account.Email, previous, creds)
 
 	if err != nil {
-		c.printHeading(position, account.Email, active, markerAvailability(store, account.Email, now), now)
+		c.printHeading(position, account.Email, part, markerAvailability(store, account.Email, now), now)
 		c.printLastKnown(account, now, threshold)
 		return refreshed
 	}
 
-	c.printHeading(position, account.Email, active, usageAvailability(usage, threshold), now)
+	c.printHeading(position, account.Email, part, usageAvailability(usage, threshold), now)
 	printReadings(c.out, usage, now, threshold, look)
 	return refreshed
 }
 
 // printHeading prints the line an account's readings go under: its position, its
-// email, and whether it can be used, with the email in red when it cannot.
+// email, whether it is pinned, and whether it can be used, with the email in red
+// when it cannot.
 func (c *ListAccountsCommand) printHeading(
 	position int,
 	email string,
-	active bool,
+	part standing,
 	account availability,
 	now time.Time,
 ) {
@@ -185,7 +186,7 @@ func (c *ListAccountsCommand) printHeading(
 	if account.exhausted {
 		color = toneExhausted
 	}
-	fmt.Fprintf(c.out, "%s [%s]\n", look.heading(position, email, active, color), look.state(account, now))
+	fmt.Fprintf(c.out, "%s [%s]\n", look.heading(position, email, part, color), look.state(account, now))
 }
 
 // printLastKnown stands in for a live reading that could not be taken, such as

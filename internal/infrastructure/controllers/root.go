@@ -144,6 +144,7 @@ func newRootCommand(version string, updates domain.SelfUpdateRepository) *cobra.
 		newReorderCommand(cfg, &provider),
 		newStatusCommand(cfg, &provider),
 		newUseCommand(cfg, &provider),
+		newUnpinCommand(cfg, &provider),
 		newRotateCommand(cfg, &provider),
 		newThresholdCommand(cfg),
 		newEnsureCommand(cfg, &provider),
@@ -192,7 +193,8 @@ func bindPersistentFlags(root *cobra.Command, cfg *entities.Config, color *color
 	flags.DurationVar(&cfg.Interval, "interval", cfg.Interval, "monitor poll interval")
 	flags.BoolVar(&cfg.PreferPrimary, "prefer-primary", cfg.PreferPrimary,
 		"always run on the highest-priority account that has capacity, returning to it "+
-			"as soon as its limits reset (use --prefer-primary=false for round-robin)")
+			"as soon as its limits reset, except while an account picked with use or rotate is "+
+			"pinned (use --prefer-primary=false for round-robin)")
 	flags.StringVar(&cfg.StorePath, "store", cfg.StorePath, "path to the ccswitch account store")
 	flags.StringVar(&cfg.CredentialsPath, "credentials", cfg.CredentialsPath,
 		"path to Claude Code .credentials.json")

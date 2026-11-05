@@ -31,6 +31,22 @@ func TestRotateAccountCommandExecute(t *testing.T) {
 		assert.Equal(t, 1, credentials.WriteCalls)
 	})
 
+	t.Run("should pin the account it rotates to so the monitor keeps it", func(t *testing.T) {
+		t.Parallel()
+		// given: the primary is healthy, so the monitor's policy would return to it
+		accounts := &doubles.InMemoryAccountsRepository{Store: twoAccountStore()}
+		command := commands.NewRotateAccountCommand(
+			accounts, &doubles.StubCredentialsRepository{}, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Execute(false)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "b@example.com", accounts.Store.Rotation.PinnedEmail)
+		assert.True(t, accounts.Store.Rotation.Pinned())
+	})
+
 	t.Run("should defer the on-disk switch when a claude session is running", func(t *testing.T) {
 		t.Parallel()
 		// given
@@ -42,9 +58,11 @@ func TestRotateAccountCommandExecute(t *testing.T) {
 		// when
 		err := command.Execute(false)
 
-		// then
+		// then: the deferred pick is pinned too, or the monitor's next poll would
+		// replace it before the launch that installs it
 		require.NoError(t, err)
 		assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.True(t, accounts.Store.Rotation.Pinned())
 		assert.Equal(t, 0, credentials.WriteCalls)
 	})
 
