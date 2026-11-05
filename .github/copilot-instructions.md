@@ -18,11 +18,12 @@ Clean Architecture with a strict domain / infrastructure split:
   a profile map of what tells them apart). No infrastructure imports.
 - `internal/domain/commands` — application logic: `EnrollAccountCommand`, `ListAccountsCommand`,
   `GetAccountCommand` (`show`), `UpdateAccountCommand`, `DeleteAccountsCommand` (`remove`),
-  `ReorderAccountsCommand`, `StatusCommand`, `UseAccountCommand`, `RotateAccountCommand`,
-  `EnsureActiveCommand`, `CheckCapacityCommand` (`capacity`), `SetThresholdCommand`,
-  `MonitorCommand`, `SelfUpdateCommand` (`self-update`). Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon). A `Pool`
-  bundles one provider's ports; `ListAccountsCommand`, `StatusCommand`, `SetThresholdCommand` and
-  `MonitorCommand` take one per provider through `WithPool`, and the rest act on one pool.
+  `ReorderAccountsCommand`, `StatusCommand`, `UseAccountCommand`, `UnpinAccountCommand` (`unpin`),
+  `RotateAccountCommand`, `EnsureActiveCommand`, `CheckCapacityCommand` (`capacity`),
+  `SetThresholdCommand`, `MonitorCommand`, `SelfUpdateCommand` (`self-update`). Each takes ports and exposes `Execute` (or `Run`/`Tick` for the daemon). A `Pool`
+  bundles one provider's ports; `ListAccountsCommand`, `StatusCommand`, `UnpinAccountCommand`,
+  `SetThresholdCommand` and `MonitorCommand` take one per provider through `WithPool`, and the rest
+  act on one pool.
 - `internal/domain/repositories` — ports: `AccountsRepository`, `CredentialsRepository`,
   `UsageRepository`, `TokensRepository`, `SessionsRepository`, `SelfUpdateRepository`.
 - `internal/infrastructure/repositories` — adapters: `JSONAccountsRepository` (atomic 0600 store),
@@ -148,6 +149,15 @@ Clean Architecture with a strict domain / infrastructure split:
   credentials — the monitor reloads the store every tick — and `selectTarget` compares `Order` values,
   so they must never tie. A removed or missing current account is replaced through `Store.Successor`,
   which never picks a long-lived account.
+- **An account picked by hand stays until it is exhausted.** `use` and `rotate` pin the account they
+  install (`RotationState.Pin`); `reconcile` keeps a pinned account active while it has capacity,
+  whatever `selectTarget` prefers, and releases the pin once a poll finds it exhausted. Without it,
+  `--prefer-primary` moved every pick back to the primary on the next tick, and the shell wrapper's
+  `ensure` installed it on the next launch. A pin names the current account or nothing: every policy
+  switch goes through `RotationState.Select`, which releases it, and `Store.Remove` drops a pin on
+  the removed account — never assign `Rotation.CurrentEmail` directly. A long-lived account's pin
+  lasts until a person picks again or runs `unpin`, which re-applies the policy through a monitor
+  tick, as `threshold` does.
 - **A refresh must be published back to the credential store.** ccswitch and Claude Code share one
   refresh token, and the server rotates it on every refresh — whoever refreshes second with the old
   token gets `invalid_grant`. Keeping a refreshed pair only in the ccswitch store therefore logs

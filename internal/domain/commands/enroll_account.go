@@ -159,7 +159,7 @@ func upsertAccount(
 	store.Accounts = append(store.Accounts, account)
 
 	if store.Rotation.CurrentEmail == "" {
-		store.Rotation.CurrentEmail = email
+		store.Rotation.Select(email)
 	}
 	return &store.Accounts[len(store.Accounts)-1]
 }

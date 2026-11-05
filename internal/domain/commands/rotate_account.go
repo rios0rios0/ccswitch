@@ -34,8 +34,11 @@ func NewRotateAccountCommand(
 	}
 }
 
-// Execute switches to the next healthy account. When a session of the provider's
-// CLI is running and force is false, the switch is deferred to the next launch.
+// Execute switches to the next healthy account and pins it there, as `use` does: an
+// account picked by hand stays active until it is exhausted, rather than until the
+// monitor's next poll prefers another (see MonitorCommand.reconcile). When a session
+// of the provider's CLI is running and force is false, the switch is deferred to the
+// next launch.
 func (c *RotateAccountCommand) Execute(force bool) error {
 	store, err := c.accounts.Load()
 	if err != nil {
@@ -52,24 +55,26 @@ func (c *RotateAccountCommand) Execute(force bool) error {
 	}
 
 	if c.sessions != nil && c.sessions.Running() && !force {
-		store.Rotation.CurrentEmail = next.Email
+		store.Rotation.Pin(next.Email)
 		if err = c.accounts.Save(store); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stdout,
 			"[ccswitch] %s is running; will switch to %s on next launch (use --force to switch now)\n",
 			store.Provider.Command(), next.Email)
+		fmt.Fprintln(os.Stdout, pinNote(&next))
 		return nil
 	}
 
 	if err = c.credentials.Write(&next.Credentials, &next.Identity); err != nil {
 		return err
 	}
-	store.Rotation.CurrentEmail = next.Email
+	store.Rotation.Pin(next.Email)
 	if err = c.accounts.Save(store); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stdout, "[ccswitch] rotated to %s\n", next.Email)
+	fmt.Fprintln(os.Stdout, pinNote(&next))
 	return nil
 }

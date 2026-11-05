@@ -155,7 +155,7 @@ func (c *MonitorCommand) resolveCurrent(store *entities.Store, now time.Time) *e
 	if !ok {
 		return nil
 	}
-	store.Rotation.CurrentEmail = successor.Email
+	store.Rotation.Select(successor.Email)
 	return store.FindAccount(store.Rotation.CurrentEmail)
 }
 
@@ -257,18 +257,34 @@ func pollAccount(
 
 // reconcile moves to whichever account the rotation policy selects, given the
 // exhaustion markers pollAll has just refreshed.
+//
+// An account a person pinned with `use` or `rotate` is the exception: it stays for
+// as long as it has capacity, whatever the policy would prefer. Without that, the
+// prefer-primary policy moved every pick back to the primary on the next poll, and
+// the shell wrapper's `ensure` installed the primary on the next launch -- so a pick
+// lasted minutes at most. Once the pinned account is exhausted it cannot serve the
+// choice any longer, so the pin is released and the policy moves on as it would have.
 func (c *MonitorCommand) reconcile(
 	pool Pool,
 	store *entities.Store,
 	current *entities.Account,
 	now time.Time,
 ) {
+	log := providerLog(store.Provider)
 	exhausted := store.Rotation.IsExhausted(current.Email, now)
+	if store.Rotation.Pinned() {
+		if !exhausted {
+			log.Debugf("[ccswitch] keeping %s, which was pinned by hand", current.Email)
+			return
+		}
+		store.Rotation.Unpin()
+		log.Infof("[ccswitch] released the pin on %s, which is exhausted", current.Email)
+	}
 
 	target, ok := c.selectTarget(store, current, now, exhausted)
 	if !ok {
 		if exhausted {
-			providerLog(store.Provider).Warnf("[ccswitch] %s exhausted and no account has capacity; recovers %s",
+			log.Warnf("[ccswitch] %s exhausted and no account has capacity; recovers %s",
 				current.Email, formatMoment(now, store.Rotation.ExhaustedUntil[current.Email]))
 		}
 		return
@@ -333,7 +349,7 @@ func switchTo(
 ) {
 	log := providerLog(store.Provider)
 	if pool.running() {
-		store.Rotation.CurrentEmail = target.Email
+		store.Rotation.Select(target.Email)
 		log.Infof("[ccswitch] %s -> %s on next launch (%s; session active)",
 			current.Email, target.Email, reason)
 		return
@@ -343,7 +359,7 @@ func switchTo(
 		log.Warnf("[ccswitch] failed to install %s: %v", target.Email, err)
 		return
 	}
-	store.Rotation.CurrentEmail = target.Email
+	store.Rotation.Select(target.Email)
 	log.Infof("[ccswitch] switched %s -> %s (%s)", current.Email, target.Email, reason)
 }
 

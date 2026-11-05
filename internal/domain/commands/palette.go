@@ -42,6 +42,9 @@ const (
 	toneTime tone = "36"
 	// toneManual marks an account that only a person can select: magenta.
 	toneManual tone = "35"
+	// tonePinned marks the account a person pinned with `use` or `rotate`: magenta,
+	// like the accounts only a person can select, since a person chose it as well.
+	tonePinned tone = "35"
 	// toneActive marks the account Claude Code runs on: green, as git marks the
 	// branch checked out.
 	toneActive tone = "32"
@@ -137,14 +140,48 @@ func (p palette) providerName(provider entities.Provider) string {
 	return p.paint(mark.color, mark.logo+" "+provider.Name())
 }
 
+// standing is the part an account plays in its provider's rotation: none, the account
+// the provider's CLI runs on, or that account pinned there by a person. A pin only
+// ever holds the active account, so the three are all there is.
+type standing int
+
+const (
+	standingIdle standing = iota
+	standingActive
+	standingPinned
+)
+
+// standingOf returns the part the account with the email plays in the store's
+// rotation.
+func standingOf(store *entities.Store, email string) standing {
+	switch {
+	case email != store.Rotation.CurrentEmail:
+		return standingIdle
+	case store.Rotation.Pinned():
+		return standingPinned
+	default:
+		return standingActive
+	}
+}
+
 // heading starts an account's line: a marker on the account its provider's CLI runs
-// on, the account's position in the rotation order, and its email in the given tone.
-func (p palette) heading(position int, email string, active bool, color tone) string {
+// on, the account's position in the rotation order, its email in the given tone, and
+// the pin when a person pinned it there.
+func (p palette) heading(position int, email string, part standing, color tone) string {
 	marker := " "
-	if active {
+	if part != standingIdle {
 		marker = p.paint(toneActive, "*")
 	}
-	return marker + " " + p.paint(toneMuted, strconv.Itoa(position)+".") + " " + p.paint(color, email)
+	line := marker + " " + p.paint(toneMuted, strconv.Itoa(position)+".") + " " + p.paint(color, email)
+	if part == standingPinned {
+		line += " " + p.pinned()
+	}
+	return line
+}
+
+// pinned marks the account a person pinned with `use` or `rotate`.
+func (p palette) pinned() string {
+	return p.paint(tonePinned, "(pinned)")
 }
 
 // state phrases whether an account can be used: "ok", "exhausted", or, when the

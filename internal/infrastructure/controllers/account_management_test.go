@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -157,4 +158,91 @@ func TestAccountManagementCLIRejectsInvalidChanges(t *testing.T) {
 			assert.Equal(t, before, after, "rejected commands must leave the persisted store untouched")
 		})
 	}
+}
+
+// storedRotation reloads the persisted rotation state rather than relying on
+// in-memory state.
+func storedRotation(t *testing.T, path string) entities.RotationState {
+	t.Helper()
+	store, err := repositories.NewJSONAccountsRepository(path).Load()
+	require.NoError(t, err)
+	return store.Rotation
+}
+
+func TestPinCLI(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should persist the pin on the account picked with use", func(t *testing.T) {
+		t.Parallel()
+		// given
+		path := filepath.Join(t.TempDir(), "store.json")
+		enrollFixture(t, path, primaryEmail)
+		enrollFixture(t, path, backupEmail)
+		var out bytes.Buffer
+
+		// when
+		err := executeCLIWith(path, &doubles.StubSelfUpdateRepository{}, &out, io.Discard, "use", backupEmail)
+
+		// then: the daemon reloads the store every tick, which is where it reads the pin
+		require.NoError(t, err)
+		rotation := storedRotation(t, path)
+		assert.Equal(t, backupEmail, rotation.CurrentEmail)
+		assert.Equal(t, backupEmail, rotation.PinnedEmail)
+		assert.Equal(t, "[ccswitch] switched to "+backupEmail+"\n"+
+			"[ccswitch] pinned until you pick another account, since its usage cannot be polled; "+
+			"`ccswitch unpin` lets the rotation policy choose again\n", out.String())
+	})
+
+	t.Run("should release the pin with unpin", func(t *testing.T) {
+		t.Parallel()
+		// given
+		path := filepath.Join(t.TempDir(), "store.json")
+		enrollFixture(t, path, primaryEmail)
+		enrollFixture(t, path, backupEmail)
+		require.NoError(t, executeCLI(path, "use", backupEmail))
+		var out bytes.Buffer
+
+		// when
+		err := executeCLIWith(path, &doubles.StubSelfUpdateRepository{}, &out, io.Discard, "unpin")
+
+		// then: no account here can be polled, so the policy has nothing to hand over to
+		require.NoError(t, err)
+		rotation := storedRotation(t, path)
+		assert.Empty(t, rotation.PinnedEmail)
+		assert.Equal(t, backupEmail, rotation.CurrentEmail)
+		assert.Equal(t, "[ccswitch] unpinned "+backupEmail+"\n[ccswitch] active account: "+backupEmail+"\n",
+			out.String())
+	})
+
+	t.Run("should leave Claude's pin alone when unpin names Codex", func(t *testing.T) {
+		t.Parallel()
+		// given
+		path := filepath.Join(t.TempDir(), "store.json")
+		enrollFixture(t, path, primaryEmail)
+		enrollFixture(t, path, backupEmail)
+		require.NoError(t, executeCLI(path, "use", backupEmail))
+		var out bytes.Buffer
+
+		// when
+		err := executeCLIWith(path, &doubles.StubSelfUpdateRepository{}, &out, io.Discard,
+			"unpin", "--provider", "codex")
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "[ccswitch] no account is pinned\n", out.String())
+		assert.Equal(t, backupEmail, storedRotation(t, path).PinnedEmail)
+	})
+
+	t.Run("should reject an argument to unpin", func(t *testing.T) {
+		t.Parallel()
+		// given
+		path := filepath.Join(t.TempDir(), "store.json")
+		enrollFixture(t, path, primaryEmail)
+
+		// when
+		err := executeCLI(path, "unpin", primaryEmail)
+
+		// then
+		require.Error(t, err)
+	})
 }

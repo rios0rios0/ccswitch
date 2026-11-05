@@ -16,6 +16,7 @@
 - **Usage monitoring**: a background daemon polls the usage endpoint of each provider (`/api/oauth/usage` for Claude, `/backend-api/wham/usage` for Codex) for every enrolled account, so it knows when the active one is exhausted and keeps each backup's tokens alive.
 - **Automatic rotation**: when the active account crosses a utilization threshold (default 99%), it swaps in the next account that still has capacity. Retune it at any time with `ccswitch threshold <percent>` — a running daemon picks the new value up without a restart.
 - **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
+- **Your pick sticks**: an account you switch to with `ccswitch use` is pinned — it stays active until it is exhausted, even while a higher-priority account has more capacity, and `ccswitch unpin` hands the choice back to the rotation. See [Manual switches](#manual-switches).
 - **Account management**: list, inspect, reprioritize, reorder and remove enrolled accounts from the command line; `ccswitch list` shows when every limit of every account resets.
 - **Usage at a glance**: on a terminal, `ccswitch list` and `ccswitch show` draw a meter beside every limit, green while the limit is well clear of the rotation threshold, yellow as it closes in and red once it reaches it, line the reset times up in columns, and show exhausted accounts in red. Each provider's accounts sit under its logo and name in its own color — `✻ Claude` and `>_ Codex` — so the two are told apart at a glance.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
@@ -67,7 +68,8 @@ ccswitch threshold --reset  # back to the built-in default
 
 Setting one applies it immediately as well as persisting it: every account is repolled, the
 exhaustion markers the old threshold produced are rewritten from what the polls saw, and the
-highest-priority account below the new threshold becomes active.
+highest-priority account below the new threshold becomes active — unless the active account is
+[pinned](#manual-switches) and still below it, in which case it stays.
 
 ### Rotation policy
 
@@ -77,7 +79,32 @@ An exhausted account is held until **every** limit that put it over the threshol
 
 With `--prefer-primary=false` the monitor instead cycles forward, staying on each account until that account is exhausted and only then advancing.
 
-Because the daemon enforces this policy continuously, `ccswitch use` and `ccswitch rotate` take effect immediately but are not sticky — the next poll returns to whatever the policy selects. To pin an account manually, run with `--prefer-primary=false` or stop the daemon.
+### Manual switches
+
+An account you pick by hand stays picked. `ccswitch use <email>` **pins** the account it installs,
+and so does `ccswitch rotate`, which picks the next account that has capacity. The monitor keeps a
+pinned account active for as long as it has capacity, even while an account of higher priority has
+more, so every later `claude` launch still runs on it. Once a poll finds the pinned account exhausted,
+the monitor releases the pin and rotates exactly as described above, so a pin never strands you on an
+account that has run out.
+
+```bash
+ccswitch use backup@example.com   # switch now, and stay on it until it is exhausted
+ccswitch unpin                    # hand the choice back to the rotation policy at once
+```
+
+`ccswitch unpin` releases the pin and applies the policy on the spot: with `--prefer-primary`, the
+highest-priority account that has capacity becomes active, installed on the next launch while a
+session is running. Picking another account with `use` moves the pin to it. `list` and `show` mark the
+pinned account `(pinned)`, and `status` marks the current account the same way:
+
+```text
+  1. primary@example.com [ok]
+* 2. backup@example.com (pinned) [ok]
+```
+
+The usage of a [long-lived account](#long-lived-tokens) cannot be read, so ccswitch never sees it run
+out: once picked, it stays until you pick another account or run `ccswitch unpin`.
 
 ## Installation
 
@@ -164,8 +191,9 @@ ccswitch update <email> --priority 2   # move an account in the rotation order
 ccswitch reorder <email>...        # set the rotation order, primary first
 ccswitch remove <email>...         # remove accounts from the store
 ccswitch status                    # show the active account and its usage
-ccswitch use <email>               # manually switch accounts (of whichever provider the email is enrolled with)
-ccswitch rotate                    # rotate to the next healthy account (--provider codex for Codex's)
+ccswitch use <email>               # switch accounts and stay there until it is exhausted (see Manual switches)
+ccswitch unpin                     # let the rotation policy choose again (every provider's pin unless --provider names one)
+ccswitch rotate                    # rotate to the next healthy account and stay there (--provider codex for Codex's)
 ccswitch threshold 100             # set the rotation threshold, applied immediately
 ccswitch capacity                  # exit 3 when no account has capacity left (no network, see below; --provider codex for Codex's)
 ccswitch monitor                   # run the daemon in the foreground
@@ -234,7 +262,8 @@ ccswitch enroll --priority top                       # enroll the logged-in acco
 
 Changing the order touches no credentials. The monitor reloads the store on every poll, so a running
 daemon applies the new order on its next one: with `--prefer-primary` it switches to an account you
-moved above the active one as long as that account has capacity.
+moved above the active one as long as that account has capacity — unless the active account is
+[pinned](#manual-switches), which stays until it is exhausted or you run `ccswitch unpin`.
 
 `ccswitch remove <email>...` removes accounts and their stored tokens; nothing is removed unless every
 named account is enrolled. Enrolling a removed account again takes a login as that account first.
@@ -248,11 +277,11 @@ never handed over to automatically; when only those remain, pick one with `ccswi
 |------------------|---------------------------------------|--------------------------------------------------------|
 | `--threshold`    | `99`                                  | Utilization percent (0-100) that triggers rotation, for this invocation only. The value stored by `ccswitch threshold` applies when this is not passed. |
 | `--interval`     | `5m`                                  | Monitor poll interval.                                 |
-| `--prefer-primary` | `true`                              | Always run on the highest-priority account with capacity, returning to the primary as soon as its limits reset. |
+| `--prefer-primary` | `true`                              | Always run on the highest-priority account with capacity, returning to the primary as soon as its limits reset — except while an account picked with `use` or `rotate` is [pinned](#manual-switches). |
 | `--store`        | `~/.local/state/ccswitch/store.json`  | Path to the account store.                             |
 | `--credentials`  | `~/.claude/.credentials.json`         | Path to Claude Code's credentials file. Ignored on macOS, where the login keychain is used instead. |
 | `-v`, `--verbose` | `false`                              | Enable debug logging. A daemon started by `monitor --ensure-daemon -v` logs at debug level too. `DEBUG=true` in the environment does the same. |
-| `-p`, `--provider` |                                     | Which provider's accounts a command acts on: `claude` or `codex`. An enrolled email is found under its provider on its own; `enroll`, `rotate`, `ensure` and `capacity` act on Claude's unless it is given; `list` and `status` show every provider unless it is given. See [Codex](#codex). |
+| `-p`, `--provider` |                                     | Which provider's accounts a command acts on: `claude` or `codex`. An enrolled email is found under its provider on its own; `enroll`, `rotate`, `ensure` and `capacity` act on Claude's unless it is given; `list`, `status` and `unpin` cover every provider unless it is given. See [Codex](#codex). |
 | `--codex-home`   | `~/.codex`                            | Codex's home directory, whose `auth.json` holds the Codex sign-in. `CODEX_HOME` sets it as it does for Codex. |
 | `--color`        | `auto`                                | When to color `ccswitch list` and `ccswitch show`: `auto` colors a terminal unless the environment says otherwise, `always` colors a pipe too, and `never` colors nothing. See [Colors](#colors). |
 
@@ -264,7 +293,8 @@ threshold, the point at which an active limit rotates its account away. The same
 meter, 20 cells of 5% each, filled in eighths of a cell. Figures and meters round down, as Claude Code's
 own usage screen does, so a figure never reads as the threshold before it turns red, and only a limit
 that is used up fills its meter. Exhausted accounts are red, countdowns cyan, the mark on the account
-each CLI runs on (`*` in `list`, `(active)` in `show`) green, and manual-only accounts magenta.
+each CLI runs on (`*` in `list`, `(active)` in `show`) green, and manual-only accounts and the
+`(pinned)` mark of an account picked by hand magenta.
 Warnings are yellow: usage that could not be read, and credentials Claude Code would discard. Dates,
 positions and the empty part of each meter are faint.
 
@@ -308,7 +338,7 @@ ccswitch enroll --token <token> --email <email>
 ccswitch use <email>     # switch to it deliberately
 ```
 
-While a long-lived account is active the monitor keeps applying the rotation policy, so it returns to a normal account as soon as one has capacity again. To make an account monitorable, log in to it with `claude` and `/login` and enroll it normally — `ccswitch` picks the full-scoped credentials back up automatically.
+Picking it pins it, as `use` pins any account (see [Manual switches](#manual-switches)), and since its usage cannot be read `ccswitch` never sees it run out: it stays active until you pick another account. `ccswitch unpin` hands it back to the monitor, which returns to a normal account at once, or as soon as one has capacity again. To make an account monitorable, log in to it with `claude` and `/login` and enroll it normally — `ccswitch` picks the full-scoped credentials back up automatically.
 
 ### Checking capacity
 
@@ -352,8 +382,8 @@ ccswitch capacity --provider codex       # exit 3 when no Codex account has capa
 A command that names an email looks it up among both providers' accounts; when the same email is enrolled
 with both, `--provider` (or `-p`) says which one is meant. `reorder` sets one provider's order at a time.
 The commands that act on one provider without naming an account -- `enroll`, `rotate`, `ensure` and
-`capacity` -- act on Claude's unless `--provider codex` is given, as they always have; `list` and `status`
-show every provider unless it is given, and `threshold` and the monitor always cover both.
+`capacity` -- act on Claude's unless `--provider codex` is given, as they always have; `list`, `status`
+and `unpin` cover every provider unless it is given, and `threshold` and the monitor always cover both.
 
 A Codex account shows what Codex's own `/status` reads from the ChatGPT backend. Its windows depend on its
 plan and are named by their length -- a free plan has a single `30-day` window, the paid plans a `5-hour` and
@@ -463,7 +493,7 @@ ccswitch/
 └── internal/
     ├── domain/
     │   ├── entities/             # Account, Usage, Limit, RotationState, Store, Provider, Config
-    │   ├── commands/             # enroll, list, show, update, remove, reorder, status, use, rotate, threshold, ensure, capacity, monitor, self-update
+    │   ├── commands/             # enroll, list, show, update, remove, reorder, status, use, unpin, rotate, threshold, ensure, capacity, monitor, self-update
     │   └── repositories/         # ports: accounts, credentials, usage, tokens, sessions, self-update
     └── infrastructure/
         ├── controllers/          # cobra CLI wiring

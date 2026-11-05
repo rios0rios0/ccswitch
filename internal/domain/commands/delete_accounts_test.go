@@ -51,6 +51,26 @@ func TestDeleteAccountsCommandExecute(t *testing.T) {
 		assert.Equal(t, "rc", credentials.Written.RefreshToken)
 	})
 
+	t.Run("should drop the pin and hand over when the pinned account is removed", func(t *testing.T) {
+		t.Parallel()
+		// given
+		store := threeAccountStore()
+		store.Rotation.Pin("b@example.com")
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := &doubles.StubCredentialsRepository{}
+		command := commands.NewDeleteAccountsCommand(accounts, credentials, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Execute([]string{"b@example.com"})
+
+		// then: the account that takes over was chosen by the policy, not by a person
+		require.NoError(t, err)
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.Empty(t, accounts.Store.Rotation.PinnedEmail)
+		require.NotNil(t, credentials.Written)
+		assert.Equal(t, "ra", credentials.Written.RefreshToken)
+	})
+
 	t.Run("should defer installing the successor while a claude session is running", func(t *testing.T) {
 		t.Parallel()
 		// given

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"time"
@@ -193,14 +194,14 @@ func (c *SetThresholdCommand) report() error {
 		if len(store.Accounts) == 0 {
 			continue
 		}
-		reportActive(c.pools[i], store, named)
+		reportActive(os.Stdout, c.pools[i], store, named)
 	}
 	return nil
 }
 
-// reportActive prints the account one provider has active, naming the provider when
-// named.
-func reportActive(pool Pool, store *entities.Store, named bool) {
+// reportActive prints the account one provider has active to the writer, naming the
+// provider when named.
+func reportActive(out io.Writer, pool Pool, store *entities.Store, named bool) {
 	whose := ""
 	if named {
 		whose = store.Provider.Name() + " "
@@ -208,16 +209,16 @@ func reportActive(pool Pool, store *entities.Store, named bool) {
 
 	current := store.FindAccount(store.Rotation.CurrentEmail)
 	if current == nil {
-		fmt.Fprintf(os.Stdout, "[ccswitch] no %saccount selected; run `ccswitch enroll`\n", whose)
+		fmt.Fprintf(out, "[ccswitch] no %saccount selected; run `ccswitch enroll`\n", whose)
 		return
 	}
 	if pendingLaunch(pool, store, current) {
-		fmt.Fprintf(os.Stdout,
+		fmt.Fprintf(out,
 			"[ccswitch] active %saccount: %s (installed on next %s launch; a session is running)\n",
 			whose, current.Email, store.Provider.Command())
 		return
 	}
-	fmt.Fprintf(os.Stdout, "[ccswitch] active %saccount: %s\n", whose, current.Email)
+	fmt.Fprintf(out, "[ccswitch] active %saccount: %s\n", whose, current.Email)
 }
 
 // pendingLaunch reports whether the selected account is chosen but not yet

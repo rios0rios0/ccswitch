@@ -98,7 +98,11 @@ func (c *StatusCommand) printCurrent(pool Pool, store *entities.Store) error {
 		return nil
 	}
 
-	fmt.Fprintf(c.out, "current account: %s\n", current.Email)
+	heading := "current account: " + current.Email
+	if store.Rotation.Pinned() {
+		heading += " (pinned)"
+	}
+	fmt.Fprintln(c.out, heading)
 
 	if !current.SupportsUsagePolling() {
 		fmt.Fprintln(c.out,

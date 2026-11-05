@@ -911,3 +911,177 @@ func TestMonitorCommandTick(t *testing.T) {
 			"the failing backup must wait out the cadence, not retry on the next tick")
 	})
 }
+
+func TestMonitorCommandTickHonorsPins(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should stay on an account pinned by hand while the primary has more capacity", func(t *testing.T) {
+		t.Parallel()
+		// given: `ccswitch use b` installed the backup while the primary is idle
+		accounts := &doubles.InMemoryAccountsRepository{Store: pinnedBackupStore()}
+		credentials := installedCreds("b", "b@example.com")
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then: prefer-primary used to move every pick back to the primary here
+		require.NoError(t, err)
+		assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.True(t, accounts.Store.Rotation.Pinned())
+		assert.Zero(t, credentials.WriteCalls)
+	})
+
+	t.Run("should not queue a switch back to the primary while a session runs on the pinned account",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: the same pick with a claude session open, which is when the old
+			// policy recorded the primary for the next launch and `ensure` installed it
+			accounts := &doubles.InMemoryAccountsRepository{Store: pinnedBackupStore()}
+			credentials := installedCreds("b", "b@example.com")
+			usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+			command := commands.NewMonitorCommand(monitorConfig(), accounts, credentials, usage, nil,
+				&doubles.StubSessionsRepository{Active: true})
+
+			// when
+			err := command.Tick(time.Now())
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+			assert.True(t, accounts.Store.Rotation.Pinned())
+		})
+
+	t.Run("should release the pin and rotate once the pinned account is exhausted", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		accounts := &doubles.InMemoryAccountsRepository{Store: pinnedBackupStore()}
+		credentials := installedCreds("b", "b@example.com")
+		usage := perAccountUsage(map[string]*entities.Usage{
+			"a": healthyUsage(),
+			"b": exhaustedUsage(),
+		})
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(now)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.Empty(t, accounts.Store.Rotation.PinnedEmail)
+		assert.True(t, accounts.Store.Rotation.IsExhausted("b@example.com", now))
+		require.NotNil(t, credentials.Written)
+		assert.Equal(t, "a", credentials.Written.AccessToken)
+	})
+
+	t.Run("should release the pin on an exhausted account even when no account has capacity",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: kept pinned, the account would be held after the primary recovers
+			now := time.Now()
+			accounts := &doubles.InMemoryAccountsRepository{Store: pinnedBackupStore()}
+			credentials := installedCreds("b", "b@example.com")
+			usage := &doubles.StubUsageRepository{Usage: exhaustedUsage()}
+			command := commands.NewMonitorCommand(
+				monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+			// when
+			err := command.Tick(now)
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+			assert.False(t, accounts.Store.Rotation.Pinned())
+			assert.Zero(t, credentials.WriteCalls)
+		})
+
+	t.Run("should keep a long-lived account pinned by hand while a pollable primary has capacity",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: its usage cannot be read, so its pin lasts until a person picks again
+			store := longLivedFallbackStore()
+			store.Rotation.Pin("long@example.com")
+			accounts := &doubles.InMemoryAccountsRepository{Store: store}
+			credentials := &doubles.StubCredentialsRepository{
+				Creds: &entities.OAuthCredentials{AccessToken: "long"},
+			}
+			usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+			command := commands.NewMonitorCommand(
+				monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+			// when
+			err := command.Tick(time.Now())
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "long@example.com", accounts.Store.Rotation.CurrentEmail)
+			assert.True(t, accounts.Store.Rotation.Pinned())
+			assert.Zero(t, credentials.WriteCalls)
+		})
+
+	t.Run("should install a pinned account a rotate deferred, once the session exits", func(t *testing.T) {
+		t.Parallel()
+		// given: `rotate` pinned "b" while a session held "a", and the session has exited
+		accounts := &doubles.InMemoryAccountsRepository{Store: pinnedBackupStore()}
+		credentials := installedCreds("a", "a@example.com")
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.True(t, accounts.Store.Rotation.Pinned())
+		require.NotNil(t, credentials.Written)
+		assert.Equal(t, "b", credentials.Written.AccessToken)
+	})
+
+	t.Run("should drop a pin whose account is no longer enrolled when handing over", func(t *testing.T) {
+		t.Parallel()
+		// given: the pointer and the pin name an account that is gone
+		store := livePairStore()
+		store.Rotation.Pin("gone@example.com")
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := installedCreds("a", "a@example.com")
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.Empty(t, accounts.Store.Rotation.PinnedEmail)
+	})
+
+	t.Run("should still return to the primary from a backup nobody pinned", func(t *testing.T) {
+		t.Parallel()
+		// given: the monitor rotated to "b" on its own, which leaves no pin
+		store := livePairStore()
+		store.Rotation.Select("b@example.com")
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := installedCreds("b", "b@example.com")
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(time.Now())
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+		require.NotNil(t, credentials.Written)
+		assert.Equal(t, "a", credentials.Written.AccessToken)
+	})
+}

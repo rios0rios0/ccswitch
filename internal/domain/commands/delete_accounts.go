@@ -78,7 +78,7 @@ func (c *DeleteAccountsCommand) Execute(emails []string) error {
 func (c *DeleteAccountsCommand) handOver(store *entities.Store) error {
 	successor, ok := store.Successor(c.now())
 	if !ok {
-		store.Rotation.CurrentEmail = ""
+		store.Rotation.Select("")
 		if err := c.accounts.Save(store); err != nil {
 			return err
 		}
@@ -91,7 +91,7 @@ func (c *DeleteAccountsCommand) handOver(store *entities.Store) error {
 		return nil
 	}
 
-	store.Rotation.CurrentEmail = successor.Email
+	store.Rotation.Select(successor.Email)
 	if err := c.accounts.Save(store); err != nil {
 		return err
 	}

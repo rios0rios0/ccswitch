@@ -549,6 +549,54 @@ func TestListAccountsDressesUpATerminal(t *testing.T) {
 	})
 }
 
+func TestListAccountsMarksThePin(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should mark the account pinned by hand after its email", func(t *testing.T) {
+		t.Parallel()
+		// given
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+
+		// when
+		out, err := listOutput(monitorConfig(), pinnedBackupStore(), usage)
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out, "  1. a@example.com [ok]\n")
+		assert.Contains(t, out, "* 2. b@example.com (pinned) [ok]\n")
+	})
+
+	t.Run("should mark a long-lived account pinned by hand after its email", func(t *testing.T) {
+		t.Parallel()
+		// given
+		store := longLivedOnlyStore()
+		store.Rotation.Pin("long@example.com")
+
+		// when
+		out, err := listOutput(monitorConfig(), store, &doubles.StubUsageRepository{})
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out,
+			"* 1. long@example.com (pinned) [manual only] long-lived token; its usage cannot be polled\n")
+	})
+
+	t.Run("should paint the pin magenta when output has colors", func(t *testing.T) {
+		t.Parallel()
+		// given
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+
+		// when
+		out, err := listOutput(styledConfig(entities.OutputColor), pinnedBackupStore(), usage)
+
+		// then
+		require.NoError(t, err)
+		assert.Contains(t, out,
+			sgr("32", "*")+" "+sgr("2", "2.")+" "+sgr("1", "b@example.com")+" "+sgr("35", "(pinned)")+
+				" ["+sgr("32", "ok")+"]\n")
+	})
+}
+
 // sgr wraps text in the escape codes a colored listing prints it with.
 func sgr(params, text string) string {
 	return "\x1b[" + params + "m" + text + "\x1b[0m"

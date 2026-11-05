@@ -342,6 +342,50 @@ func TestGetAccountDressesUpATerminal(t *testing.T) {
 	})
 }
 
+func TestGetAccountMarksThePin(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should mark the account pinned by hand beside the active mark", func(t *testing.T) {
+		t.Parallel()
+		// given
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+
+		// when
+		out, err := showOutput(monitorConfig(), pinnedBackupStore(), usage, "b@example.com")
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(out, "b@example.com (active) (pinned)\n"), out)
+	})
+
+	t.Run("should paint the pin magenta when output has colors", func(t *testing.T) {
+		t.Parallel()
+		// given
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+
+		// when
+		out, err := showOutput(styledConfig(entities.OutputColor), pinnedBackupStore(), usage, "b@example.com")
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(out,
+			sgr("1", "b@example.com")+" "+sgr("32", "(active)")+" "+sgr("35", "(pinned)")+"\n"), out)
+	})
+
+	t.Run("should not mark an account that is not the pinned one", func(t *testing.T) {
+		t.Parallel()
+		// given
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+
+		// when
+		out, err := showOutput(monitorConfig(), pinnedBackupStore(), usage, "a@example.com")
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(out, "a@example.com\n"), out)
+	})
+}
+
 // showOutput runs `show` for the email over the store and the usage, and returns
 // what it printed.
 func showOutput(

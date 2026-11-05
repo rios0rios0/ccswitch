@@ -1,7 +1,9 @@
 package commands_test
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -127,5 +129,43 @@ func TestStatusPersistsRefreshedCredentials(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, tokens.RefreshCalls, "one refresh per poll at most")
 		assert.Equal(t, []string{"a2"}, usage.Tokens)
+	})
+}
+
+func TestStatusMarksThePin(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should mark the current account pinned when it was picked by hand", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: pinnedBackupStore()}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		var out bytes.Buffer
+
+		// when
+		err := commands.NewStatusCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{}, usage, &doubles.StubTokensRepository{},
+		).WithOutput(&out).Execute()
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(out.String(), "current account: b@example.com (pinned)\n"), out.String())
+	})
+
+	t.Run("should print the current account as it always has when nothing is pinned", func(t *testing.T) {
+		t.Parallel()
+		// given
+		accounts := &doubles.InMemoryAccountsRepository{Store: livePairStore()}
+		usage := &doubles.StubUsageRepository{Usage: healthyUsage()}
+		var out bytes.Buffer
+
+		// when
+		err := commands.NewStatusCommand(
+			monitorConfig(), accounts, &doubles.StubCredentialsRepository{}, usage, &doubles.StubTokensRepository{},
+		).WithOutput(&out).Execute()
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(out.String(), "current account: a@example.com\n"), out.String())
 	})
 }
