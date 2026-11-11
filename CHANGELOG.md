@@ -22,6 +22,19 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-11
+
+### Added
+
+- added `ccswitch unpin`, which releases the pin `use` or `rotate` set -- every provider's, or the one `--provider` names -- and applies the rotation policy at once, as `threshold` does: with `--prefer-primary` the highest-priority account that has capacity becomes active, installed on the next launch while a session of its CLI is running
+- added a `(pinned)` mark to the account picked by hand, after its email in `ccswitch list` and `ccswitch show` -- in magenta on a terminal -- and after the current account in `ccswitch status`, and made `ccswitch use` say how long the account stays and warn when the monitor last saw it exhausted. Output with nothing pinned is unchanged
+
+### Changed
+
+- changed `ccswitch use` and `ccswitch rotate` to pin the account they switch to: the monitor now keeps it active for as long as it has capacity, even when an account of higher priority has more. With `--prefer-primary`, the default, the monitor used to move every pick back to the primary on its next poll -- recorded for the next launch while a session was running, so the shell wrapper's `ensure` installed the primary on the next `claude` -- and a pick lasted five minutes at most. Once a poll finds the pinned account exhausted, the pin is released and rotation goes on as before; an account enrolled from a long-lived token, whose usage cannot be polled, stays until another account is picked. `ccswitch threshold` keeps a pinned account that is still under the new threshold
+- changed the Go module `github.com/spf13/pflag` from `v1.0.10` to `v1.1.0`
+- changed the Go module `golang.org/x/sys` from `v0.49.0` to `v0.50.0`
+
 ## [0.9.2] - 2026-11-04
 
 ### Changed
