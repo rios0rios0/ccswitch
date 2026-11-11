@@ -1,6 +1,6 @@
 module github.com/rios0rios0/ccswitch
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/rios0rios0/cliforge v0.5.2
