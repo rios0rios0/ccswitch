@@ -1,10 +1,10 @@
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/rios0rios0/cliforge v0.5.2 h1:wZpd3f8ZzaxjvoNfU/BUVaG0UJxqXkQPIzkLrSh0kbY=
-github.com/rios0rios0/cliforge v0.5.2/go.mod h1:bTLGqtt1d1jxfw6J+6hqme+EKpapeDmI2KumlgRGSQw=
-github.com/rios0rios0/testkit v0.3.6 h1:UycUyI/pldvP9CWajVIJzHGhVmot/kZ/RHF/nw/P37c=
-github.com/rios0rios0/testkit v0.3.6/go.mod h1:Fvr6hXHrnjdyuVrmlB4byANYhkRwdXd/u9FLS1h59qQ=
+github.com/rios0rios0/cliforge v0.5.3 h1:XiwgsygSBVRz82pZEZH9Dn3WWE4YW1+SIS7pWknvp78=
+github.com/rios0rios0/cliforge v0.5.3/go.mod h1:7RpbNjvm3Xt7/11+euG0eZDk56F3v7diwgSdkmYbpNE=
+github.com/rios0rios0/testkit v0.3.8 h1:g6v2MrKLJy+qARR6sdh2VflDKUSEwPA4KHIkMpPmEMY=
+github.com/rios0rios0/testkit v0.3.8/go.mod h1:++sYYhLAHSZZN27+SrXkEPXDU2ZxkUGSTMZTOd3JSYU=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/sirupsen/logrus v1.10.2 h1:G2SED73/qrAu6YwbdxOD6peLkCBI3z7L+ykJFTXJBBo=
 github.com/sirupsen/logrus v1.10.2/go.mod h1:SLEg8TqYulVKKfIGHldVp2K2aYz2DKSVBq4g/H5bR7Q=
