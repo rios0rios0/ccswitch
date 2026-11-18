@@ -22,6 +22,12 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-18
+
+### Changed
+
+- changed the Go module `github.com/rios0rios0/cliforge` from `v0.5.2` to `v0.5.3`
+
 ## [0.10.0] - 2026-11-16
 
 ### Added
