@@ -48,7 +48,8 @@ func (c *RotateAccountCommand) Execute(force bool) error {
 		return errors.New("enroll at least two accounts before rotating (see `ccswitch enroll`)")
 	}
 
-	next, ok := store.NextHealthyAccount(c.now())
+	now := c.now()
+	next, ok := store.NextHealthyAccount(now)
 	if !ok || next.Email == store.Rotation.CurrentEmail {
 		fmt.Fprintln(os.Stderr, "[ccswitch] no other healthy account available to rotate to")
 		return nil
@@ -62,7 +63,7 @@ func (c *RotateAccountCommand) Execute(force bool) error {
 		fmt.Fprintf(os.Stdout,
 			"[ccswitch] %s is running; will switch to %s on next launch (use --force to switch now)\n",
 			store.Provider.Command(), next.Email)
-		fmt.Fprintln(os.Stdout, pinNote(&next))
+		fmt.Fprintln(os.Stdout, pinNote(&next, store.PinHolds(now)))
 		return nil
 	}
 
@@ -75,6 +76,6 @@ func (c *RotateAccountCommand) Execute(force bool) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "[ccswitch] rotated to %s\n", next.Email)
-	fmt.Fprintln(os.Stdout, pinNote(&next))
+	fmt.Fprintln(os.Stdout, pinNote(&next, store.PinHolds(now)))
 	return nil
 }

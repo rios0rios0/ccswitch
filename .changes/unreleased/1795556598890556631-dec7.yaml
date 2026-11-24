@@ -1,0 +1,3 @@
+kind: 'Fixed'
+body: 'fixed the monitor releasing a pin set with `ccswitch use` on its very next poll, even a failed one, when the picked account already read as exhausted; the usage endpoint reads an account at 100% whether Claude Code is still served on it or already refused, so such a pin now holds until that exhaustion ends or a poll finds the account recovered, and `ccswitch capacity` reports capacity meanwhile; a pin on an account its provider refuses outright, as Codex reports, is still released'
+time: '2026-11-24T21:43:18.890485765Z'

@@ -300,3 +300,54 @@ func TestStoreSelectionSkipsLongLivedAccounts(t *testing.T) {
 		assert.Equal(t, "first@example.com", next.Email, "it wraps back rather than picking the long-lived one")
 	})
 }
+
+func TestStorePinHolds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should hold the current account through the exhausted reading it was picked over",
+		func(t *testing.T) {
+			t.Parallel()
+			// given
+			now := time.Now()
+			store := threeAccountStore()
+			store.Rotation.MarkExhausted("second@example.com", now.Add(time.Hour))
+			store.Rotation.Pin("second@example.com")
+
+			// when
+			holds := store.PinHolds(now)
+
+			// then
+			assert.True(t, holds)
+		})
+
+	t.Run("should not hold the current account through a refusal", func(t *testing.T) {
+		t.Parallel()
+		// given: the endpoint refused the account outright, which no pick overrules
+		now := time.Now()
+		store := threeAccountStore()
+		store.Accounts[1].LastUsage = &entities.Usage{Blocked: true}
+		store.Rotation.MarkExhausted("second@example.com", now.Add(time.Hour))
+		store.Rotation.Pin("second@example.com")
+
+		// when
+		holds := store.PinHolds(now)
+
+		// then
+		assert.False(t, holds)
+	})
+
+	t.Run("should not hold an account picked while it had capacity", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		store := threeAccountStore()
+		store.Rotation.Pin("second@example.com")
+		store.Rotation.MarkExhausted("second@example.com", now.Add(time.Hour))
+
+		// when
+		holds := store.PinHolds(now)
+
+		// then: the exhaustion came after the pick, so it releases the pin as usual
+		assert.False(t, holds)
+	})
+}

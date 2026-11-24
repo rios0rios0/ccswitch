@@ -16,7 +16,7 @@
 - **Usage monitoring**: a background daemon polls the usage endpoint of each provider (`/api/oauth/usage` for Claude, `/backend-api/wham/usage` for Codex) for every enrolled account, so it knows when the active one is exhausted and keeps each backup's tokens alive.
 - **Automatic rotation**: when the active account crosses a utilization threshold (default 99%), it swaps in the next account that still has capacity. Retune it at any time with `ccswitch threshold <percent>` — a running daemon picks the new value up without a restart.
 - **Primary-first**: it always runs on the highest-priority account that has capacity, and returns to your primary as soon as its limits reset. Pass `--prefer-primary=false` for plain round-robin instead.
-- **Your pick sticks**: an account you switch to with `ccswitch use` is pinned — it stays active until it is exhausted, even while a higher-priority account has more capacity, and `ccswitch unpin` hands the choice back to the rotation. See [Manual switches](#manual-switches).
+- **Your pick sticks**: an account you switch to with `ccswitch use` is pinned — it stays active until it is exhausted (or, picked while it already reads exhausted, until that exhaustion ends), even while a higher-priority account has more capacity, and `ccswitch unpin` hands the choice back to the rotation. See [Manual switches](#manual-switches).
 - **Account management**: list, inspect, reprioritize, reorder and remove enrolled accounts from the command line; `ccswitch list` shows when every limit of every account resets.
 - **Usage at a glance**: on a terminal, `ccswitch list` and `ccswitch show` draw a meter beside every limit, green while the limit is well clear of the rotation threshold, yellow as it closes in and red once it reaches it, line the reset times up in columns, and show exhausted accounts in red. Each provider's accounts sit under its logo and name in its own color — `✻ Claude` and `>_ Codex` — so the two are told apart at a glance.
 - **Enroll once**: each account is captured a single time (its long-lived refresh token is persisted); after that, rotation is automatic — no repeated `/login`.
@@ -56,6 +56,12 @@ that is a display band rather than a ceiling: it reads `critical` from around 95
 capped every threshold at the point the warning fires and made a threshold of 99 behave exactly
 like 90.
 
+Readings are whole percentages, and 100% is as high as they go: Claude's endpoint reads an account
+at 100% whether Claude Code is still served on it or already refused, and the two answers are
+identical apart from their reset times. A threshold of 100 therefore runs each account as far as a
+reading can tell, and an account you [pick by hand](#manual-switches) over such a reading stays
+picked.
+
 The threshold set by `ccswitch threshold` lives in the store rather than on a command line, which is
 what lets it change in flight: the monitor reloads the store on every tick and reads it from there.
 An explicit `--threshold` still wins for the invocation that passes it.
@@ -85,8 +91,18 @@ An account you pick by hand stays picked. `ccswitch use <email>` **pins** the ac
 and so does `ccswitch rotate`, which picks the next account that has capacity. The monitor keeps a
 pinned account active for as long as it has capacity, even while an account of higher priority has
 more, so every later `claude` launch still runs on it. Once a poll finds the pinned account exhausted,
-the monitor releases the pin and rotates exactly as described above, so a pin never strands you on an
-account that has run out.
+the monitor releases the pin and rotates exactly as described above, so a pin placed while the account
+had capacity never strands you on an account that has run out.
+
+Picking an account that ccswitch already reads as exhausted overrules that reading, and the reading
+cannot settle the matter: an account at its limit reads 100% whether it is still served or already
+refused (see [The rotation threshold](#the-rotation-threshold)). Every poll until its limits reset
+could only repeat it, so the monitor holds such a pin through the exhaustion you picked the account
+over, rather than releasing it on the next poll, until that exhaustion ends or a poll finds the
+account back under the threshold; from then on it is an ordinary pin. `use` warns when it does this.
+While it holds, ccswitch does not rotate away from the account on its own: should Claude Code refuse
+it after all, pick another account or run `ccswitch unpin`. A refusal the endpoint reports outright,
+as Codex's does, is no such reading, so a pin on an account refused that way is released as usual.
 
 ```bash
 ccswitch use backup@example.com   # switch now, and stay on it until it is exhausted

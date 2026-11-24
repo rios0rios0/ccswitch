@@ -24,11 +24,16 @@ type Capacity struct {
 //
 // Capacity is available when the rotation policy has an account to select, and
 // also when ccswitch cannot tell: nothing is enrolled, no enrolled account can be
-// polled, or the current account is a long-lived one picked by hand with `use`,
-// whose usage cannot be read. Only when every pollable account is exhausted is it
+// polled, the current account is a long-lived one picked by hand with `use`, whose
+// usage cannot be read, or the current account was picked by hand over the
+// exhaustion its readings show, which a reading at the limit cannot settle (see
+// RotationState.PinnedThrough). Only when every pollable account is exhausted is it
 // unavailable, with the account that recovers first named in the result.
 func (s *Store) Capacity(now time.Time) Capacity {
 	if current := s.FindAccount(s.Rotation.CurrentEmail); current != nil && !current.SupportsUsagePolling() {
+		return Capacity{Available: true}
+	}
+	if s.PinHolds(now) {
 		return Capacity{Available: true}
 	}
 	if _, ok := s.PreferredAccount(now); ok {

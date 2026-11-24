@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,6 +38,55 @@ func TestJSONAccountsRepository(t *testing.T) {
 		require.NoError(t, loadErr)
 		require.Len(t, loaded.Accounts, 1)
 		assert.Equal(t, "a@example.com", loaded.Rotation.CurrentEmail)
+	})
+
+	t.Run("should keep a pin held over an exhaustion across a save", func(t *testing.T) {
+		t.Parallel()
+		// given: the monitor reloads the store on every tick, so the hold must survive it
+		path := filepath.Join(t.TempDir(), "store.json")
+		repo := repositories.NewJSONAccountsRepository(path)
+		until := time.Date(2026, time.November, 26, 12, 0, 0, 0, time.UTC)
+		store := &entities.Store{
+			Accounts: []entities.Account{{
+				Email:       "a@example.com",
+				Credentials: entities.OAuthCredentials{RefreshToken: "r"},
+			}},
+			Rotation: entities.RotationState{ExhaustedUntil: map[string]time.Time{"a@example.com": until}},
+		}
+		store.Rotation.Pin("a@example.com")
+
+		// when
+		saveErr := repo.Save(store)
+		loaded, loadErr := repo.Load()
+
+		// then
+		require.NoError(t, saveErr)
+		require.NoError(t, loadErr)
+		assert.True(t, loaded.Rotation.PinnedThrough.Equal(until))
+		assert.True(t, loaded.Rotation.PinOverridesExhaustion(until.Add(-time.Minute)))
+	})
+
+	t.Run("should write no hold into a store whose pin holds none", func(t *testing.T) {
+		t.Parallel()
+		// given: an ordinary pin, which every earlier ccswitch writes the same way
+		path := filepath.Join(t.TempDir(), "store.json")
+		repo := repositories.NewJSONAccountsRepository(path)
+		store := &entities.Store{
+			Accounts: []entities.Account{{
+				Email:       "a@example.com",
+				Credentials: entities.OAuthCredentials{RefreshToken: "r"},
+			}},
+		}
+		store.Rotation.Pin("a@example.com")
+
+		// when
+		saveErr := repo.Save(store)
+		raw, readErr := os.ReadFile(path)
+
+		// then
+		require.NoError(t, saveErr)
+		require.NoError(t, readErr)
+		assert.NotContains(t, string(raw), "pinnedThrough")
 	})
 
 	t.Run("should return an empty store when the file is missing", func(t *testing.T) {
