@@ -1000,6 +1000,147 @@ func TestMonitorCommandTickHonorsPins(t *testing.T) {
 			assert.Zero(t, credentials.WriteCalls)
 		})
 
+	t.Run("should keep an account pinned over its exhausted reading while polls repeat that reading",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: `ccswitch use b` on an account the monitor already read at its limit,
+			// which the usage endpoint reports the same whether or not it is still served
+			now := time.Now()
+			store := livePairStore()
+			store.Rotation.MarkExhausted("b@example.com", now.Add(time.Hour))
+			store.Rotation.Pin("b@example.com")
+			accounts := &doubles.InMemoryAccountsRepository{Store: store}
+			credentials := installedCreds("b", "b@example.com")
+			usage := perAccountUsage(map[string]*entities.Usage{
+				"a": healthyUsage(),
+				"b": exhaustedUsage(),
+			})
+			command := commands.NewMonitorCommand(
+				monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+			// when
+			err := command.Tick(now)
+
+			// then: releasing it here undid every such pick within one poll
+			require.NoError(t, err)
+			assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+			assert.True(t, accounts.Store.Rotation.Pinned())
+			assert.Zero(t, credentials.WriteCalls)
+		})
+
+	t.Run("should keep an account pinned over its exhausted reading when its poll fails", func(t *testing.T) {
+		t.Parallel()
+		// given: the usage endpoint refuses the poll (a 429, say), leaving the old marker
+		now := time.Now()
+		store := livePairStore()
+		store.Rotation.MarkExhausted("b@example.com", now.Add(time.Hour))
+		store.Rotation.Pin("b@example.com")
+		accounts := &doubles.InMemoryAccountsRepository{Store: store}
+		credentials := installedCreds("b", "b@example.com")
+		usage := &doubles.StubUsageRepository{
+			ByToken:    map[string]*entities.Usage{"a": healthyUsage()},
+			ErrByToken: map[string]error{"b": assert.AnError},
+		}
+		command := commands.NewMonitorCommand(
+			monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+		// when
+		err := command.Tick(now)
+
+		// then
+		require.NoError(t, err)
+		assert.Equal(t, "b@example.com", accounts.Store.Rotation.CurrentEmail)
+		assert.True(t, accounts.Store.Rotation.Pinned())
+		assert.Zero(t, credentials.WriteCalls)
+	})
+
+	t.Run("should release a pin placed over an exhaustion once the endpoint refuses the account outright",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: a refusal (Codex's `allowed: false`) fails every request, which no
+			// pick overrules, unlike a reading at the limit
+			now := time.Now()
+			store := livePairStore()
+			store.Rotation.MarkExhausted("b@example.com", now.Add(time.Hour))
+			store.Rotation.Pin("b@example.com")
+			accounts := &doubles.InMemoryAccountsRepository{Store: store}
+			credentials := installedCreds("b", "b@example.com")
+			usage := perAccountUsage(map[string]*entities.Usage{
+				"a": healthyUsage(),
+				"b": {Blocked: true},
+			})
+			command := commands.NewMonitorCommand(
+				monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+			// when
+			err := command.Tick(now)
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+			assert.False(t, accounts.Store.Rotation.Pinned())
+		})
+
+	t.Run("should release a pin placed over an exhaustion once that exhaustion has ended and another began",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: the window the pick overruled has reset, and the account is spent again
+			now := time.Now()
+			store := livePairStore()
+			store.Rotation.MarkExhausted("b@example.com", now.Add(time.Hour))
+			store.Rotation.Pin("b@example.com")
+			later := now.Add(2 * time.Hour)
+			nextWindow := &entities.Usage{Limits: []entities.Limit{{
+				Kind:     entities.LimitKindWeeklyAll,
+				Percent:  fullPct,
+				Severity: entities.SeverityCritical,
+				IsActive: true,
+				ResetsAt: later.Add(7 * 24 * time.Hour),
+			}}}
+			accounts := &doubles.InMemoryAccountsRepository{Store: store}
+			credentials := installedCreds("b", "b@example.com")
+			usage := perAccountUsage(map[string]*entities.Usage{"a": healthyUsage(), "b": nextWindow})
+			command := commands.NewMonitorCommand(
+				monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+
+			// when
+			err := command.Tick(later)
+
+			// then: the person overruled one exhaustion, not every one after it
+			require.NoError(t, err)
+			assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+			assert.False(t, accounts.Store.Rotation.Pinned())
+			require.NotNil(t, credentials.Written)
+			assert.Equal(t, "a", credentials.Written.AccessToken)
+		})
+
+	t.Run("should release a pin placed over an exhaustion once the account recovered and is spent again",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: a poll finds the account back under the threshold, its limits having
+			// reset early
+			now := time.Now()
+			store := livePairStore()
+			store.Rotation.MarkExhausted("b@example.com", now.Add(time.Hour))
+			store.Rotation.Pin("b@example.com")
+			accounts := &doubles.InMemoryAccountsRepository{Store: store}
+			credentials := installedCreds("b", "b@example.com")
+			usage := perAccountUsage(map[string]*entities.Usage{"a": healthyUsage(), "b": healthyUsage()})
+			command := commands.NewMonitorCommand(
+				monitorConfig(), accounts, credentials, usage, nil, &doubles.StubSessionsRepository{})
+			require.NoError(t, command.Tick(now))
+			require.True(t, accounts.Store.Rotation.Pinned(), "a recovered account keeps an ordinary pin")
+
+			// when: a later poll finds it exhausted again, within the window the pick overruled
+			usage.ByToken["b"] = exhaustedUsage()
+			err := command.Tick(now.Add(time.Minute))
+
+			// then
+			require.NoError(t, err)
+			assert.Equal(t, "a@example.com", accounts.Store.Rotation.CurrentEmail)
+			assert.False(t, accounts.Store.Rotation.Pinned())
+		})
+
 	t.Run("should keep a long-lived account pinned by hand while a pollable primary has capacity",
 		func(t *testing.T) {
 			t.Parallel()

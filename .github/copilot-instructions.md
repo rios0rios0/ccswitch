@@ -89,6 +89,9 @@ Clean Architecture with a strict domain / infrastructure split:
   display band, not a ceiling — `critical` from about 95% with `locked_reason` still null — so
   treating it as exhaustion capped every threshold at the point the warning fires. The only other
   trigger is a refusal (`Usage.Blocked`, from Codex's `allowed: false`), since requests then fail.
+  Nor is Claude's percentage a refusal at the top: readings are whole percentages that stop at 100,
+  with `locked_reason` null even once requests are refused, so an account read at 100% may still be
+  served — two accounts gave identical 100% replies on 2026-11-24, one refused and one served.
 - **The threshold comes from the store unless `--threshold` was named.** `ccswitch threshold`
   persists it so the daemon retunes without a restart, which is why `daemonArgs` must not bake
   `--threshold` in unless the caller passed it. Resolve through
@@ -153,9 +156,15 @@ Clean Architecture with a strict domain / infrastructure split:
   install (`RotationState.Pin`); `reconcile` keeps a pinned account active while it has capacity,
   whatever `selectTarget` prefers, and releases the pin once a poll finds it exhausted. Without it,
   `--prefer-primary` moved every pick back to the primary on the next tick, and the shell wrapper's
-  `ensure` installed it on the next launch. A pin names the current account or nothing: every policy
-  switch goes through `RotationState.Select`, which releases it, and `Store.Remove` drops a pin on
-  the removed account — never assign `Rotation.CurrentEmail` directly. A long-lived account's pin
+  `ensure` installed it on the next launch. An account picked while it already reads exhausted is
+  held through that exhaustion, since the pick overrules a reading that cannot tell a served account
+  at its limit from a refused one: `Pin` records the marker as `RotationState.PinnedThrough`,
+  `reconcile` keeps the pin while `Store.PinHolds` says so — through repeated readings and failed
+  polls alike — until that time passes or a poll finds the account recovered (`ClearExhausted` drops
+  the hold), and `Store.Capacity` reports capacity meanwhile. A refusal (`Usage.Blocked`) is never
+  held through. A pin names the current account or nothing: every policy switch goes through
+  `RotationState.Select`, which releases it, and `Store.Remove` drops a pin on the removed account
+  — never assign `Rotation.CurrentEmail` directly. A long-lived account's pin
   lasts until a person picks again or runs `unpin`, which re-applies the policy through a monitor
   tick, as `threshold` does.
 - **A refresh must be published back to the credential store.** ccswitch and Claude Code share one

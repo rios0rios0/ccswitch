@@ -47,6 +47,56 @@ func TestStoreCapacity(t *testing.T) {
 		assert.True(t, capacity.Available)
 	})
 
+	t.Run("should be available while the current account is pinned over its exhaustion", func(t *testing.T) {
+		t.Parallel()
+		// given: every account reads exhausted, and a person picked one of them anyway
+		now := time.Now()
+		store := threeAccountStore()
+		exhaustAll(store, now, 3*time.Hour, time.Hour, 2*time.Hour)
+		store.Rotation.Pin("third@example.com")
+
+		// when
+		capacity := store.Capacity(now)
+
+		// then: "none left" would send the next launch to another model on a reading
+		// the person overruled
+		assert.True(t, capacity.Available)
+	})
+
+	t.Run("should be unavailable when the account pinned over its exhaustion is refused", func(t *testing.T) {
+		t.Parallel()
+		// given: every account is exhausted, and the pinned one is refused outright
+		now := time.Now()
+		store := threeAccountStore()
+		exhaustAll(store, now, 3*time.Hour, time.Hour, 2*time.Hour)
+		store.Rotation.Pin("third@example.com")
+		store.Accounts[2].LastUsage = &entities.Usage{Blocked: true}
+
+		// when
+		capacity := store.Capacity(now)
+
+		// then
+		assert.False(t, capacity.Available)
+	})
+
+	t.Run("should be unavailable again once the exhaustion a pin overruled has ended", func(t *testing.T) {
+		t.Parallel()
+		// given: the pick overruled an exhaustion that has ended, and a later one followed
+		now := time.Now()
+		store := threeAccountStore()
+		exhaustAll(store, now, 3*time.Hour, time.Hour, 2*time.Hour)
+		store.Rotation.Pin("third@example.com")
+		later := now.Add(150 * time.Minute)
+		store.Rotation.MarkExhausted("second@example.com", later.Add(time.Hour))
+		store.Rotation.MarkExhausted("third@example.com", later.Add(time.Hour))
+
+		// when
+		capacity := store.Capacity(later)
+
+		// then
+		assert.False(t, capacity.Available)
+	})
+
 	t.Run("should name the account that recovers first when every account is exhausted", func(t *testing.T) {
 		t.Parallel()
 		// given

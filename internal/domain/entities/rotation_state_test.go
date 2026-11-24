@@ -171,3 +171,133 @@ func TestRotationStatePin(t *testing.T) {
 		assert.False(t, pinned)
 	})
 }
+
+func TestRotationStatePinOverExhaustion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should hold a pin placed on an exhausted account until that exhaustion ends", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		state := entities.RotationState{CurrentEmail: "a@example.com"}
+		state.MarkExhausted("b@example.com", now.Add(time.Hour))
+
+		// when
+		state.Pin("b@example.com")
+
+		// then
+		assert.True(t, state.PinOverridesExhaustion(now))
+		assert.False(t, state.PinOverridesExhaustion(now.Add(time.Hour)),
+			"the override must end with the exhaustion it was placed over")
+	})
+
+	t.Run("should not hold a pin placed on an account that had capacity", func(t *testing.T) {
+		t.Parallel()
+		// given
+		state := entities.RotationState{CurrentEmail: "a@example.com"}
+
+		// when
+		state.Pin("b@example.com")
+
+		// then
+		assert.False(t, state.PinOverridesExhaustion(time.Now()))
+		assert.True(t, state.PinnedThrough.IsZero())
+	})
+
+	t.Run("should hold nothing over a marker whose time has already passed", func(t *testing.T) {
+		t.Parallel()
+		// given: a marker the monitor has not cleared yet, though its account has recovered
+		now := time.Now()
+		state := entities.RotationState{CurrentEmail: "a@example.com"}
+		state.MarkExhausted("b@example.com", now.Add(-time.Minute))
+
+		// when
+		state.Pin("b@example.com")
+
+		// then
+		assert.False(t, state.PinOverridesExhaustion(now))
+	})
+
+	t.Run("should end the override but keep the pin once a poll finds the account recovered",
+		func(t *testing.T) {
+			t.Parallel()
+			// given
+			now := time.Now()
+			state := entities.RotationState{}
+			state.MarkExhausted("b@example.com", now.Add(time.Hour))
+			state.Pin("b@example.com")
+
+			// when
+			state.ClearExhausted("b@example.com")
+
+			// then: an ordinary pin from here on, which the next exhaustion releases
+			assert.False(t, state.PinOverridesExhaustion(now))
+			assert.True(t, state.Pinned())
+		})
+
+	t.Run("should keep the override when another account recovers", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		state := entities.RotationState{}
+		state.MarkExhausted("a@example.com", now.Add(time.Hour))
+		state.MarkExhausted("b@example.com", now.Add(time.Hour))
+		state.Pin("b@example.com")
+
+		// when
+		state.ClearExhausted("a@example.com")
+
+		// then
+		assert.True(t, state.PinOverridesExhaustion(now))
+	})
+
+	t.Run("should end the override when the pin is released", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		state := entities.RotationState{}
+		state.MarkExhausted("b@example.com", now.Add(time.Hour))
+		state.Pin("b@example.com")
+
+		// when
+		state.Unpin()
+
+		// then
+		assert.False(t, state.PinOverridesExhaustion(now))
+		assert.True(t, state.PinnedThrough.IsZero())
+	})
+
+	t.Run("should not revive the override when the policy returns to the account", func(t *testing.T) {
+		t.Parallel()
+		// given
+		now := time.Now()
+		state := entities.RotationState{}
+		state.MarkExhausted("b@example.com", now.Add(time.Hour))
+		state.Pin("b@example.com")
+
+		// when: the policy moves away and later comes back on its own
+		state.Select("a@example.com")
+		state.Select("b@example.com")
+
+		// then
+		assert.False(t, state.PinOverridesExhaustion(now))
+		assert.True(t, state.PinnedThrough.IsZero())
+	})
+
+	t.Run("should not override for a pin on an account other than the current one", func(t *testing.T) {
+		t.Parallel()
+		// given: a pin left behind on an account that is no longer current
+		now := time.Now()
+		state := entities.RotationState{
+			CurrentEmail:  "a@example.com",
+			PinnedEmail:   "b@example.com",
+			PinnedThrough: now.Add(time.Hour),
+		}
+
+		// when
+		overrides := state.PinOverridesExhaustion(now)
+
+		// then
+		assert.False(t, overrides)
+	})
+}

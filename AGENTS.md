@@ -105,6 +105,12 @@ Nothing else branches on the OS; keep it that way.
   point the warning fires, which made a threshold of 99 behave exactly like 90. The one other trigger
   is a refusal, not a band: Codex answering `allowed: false` sets `Usage.Blocked`, which exhausts the
   account because its requests fail — a workspace out of credits reaches it with no window full.
+  Claude's percentage is no refusal at the top either: the endpoint reports whole percentages and
+  stops at 100, and `locked_reason` stays null even once requests are refused, so an account it reads
+  at 100% may still be served. Measured on 2026-11-24: two accounts answered `utilization: 100.0` and
+  `percent: 100` with replies identical but for their reset times, and Claude Code was refused on one
+  and served on the other. Only the CLI ever sees a refusal, which is why a person may overrule the
+  reading with a pin (see "An account picked by hand" below).
 - **The threshold in force comes from the store unless `--threshold` was named.** `ccswitch
   threshold` persists it so the monitor — which reloads the store every tick — retunes without a
   restart, which is why `daemonArgs` must not bake `--threshold` into the detached daemon unless the
@@ -215,10 +221,21 @@ Nothing else branches on the OS; keep it that way.
   whatever `selectTarget` would prefer; once a poll finds it exhausted, the pin is released and the
   policy picks the next account as it would have. Without the pin, `--prefer-primary` moved every pick
   back to the primary on the next tick — recorded for the next launch while a session ran, which the
-  shell wrapper's `ensure` then installed — so `ccswitch use` lasted one poll. A pin names the current
-  account or nothing (`RotationState.Pinned` compares the two): every switch the policy makes goes
-  through `RotationState.Select`, which releases it, and `Store.Remove` drops a pin on the account it
-  removes, so a pin never follows the policy's choice nor comes back into force on its own. Never
+  shell wrapper's `ensure` then installed — so `ccswitch use` lasted one poll. An account picked while
+  it already reads exhausted is held through that exhaustion instead: the pick overrules a reading
+  that cannot tell a served account at its limit from a refused one (see "Exhaustion is decided"
+  above), and the polls until it ends can only repeat it — releasing it on the next one made a person
+  pick an account Claude Code still served again every five minutes, and a failed poll (a 429 leaves
+  the marker as it was) released it on no reading at all. `Pin` records the marker's time as
+  `RotationState.PinnedThrough`; `reconcile` keeps the pin while `Store.PinHolds` says so, which
+  ends when that time passes or a poll finds the account back under the threshold (`ClearExhausted`
+  drops the hold), and from then on it is an ordinary pin, released by the next exhaustion. A refusal
+  is never held through: `PinHolds` is false for an account whose last poll was `Usage.Blocked`
+  (Codex's `allowed: false`), whose requests fail whatever a person picks. `Store.Capacity` reports
+  capacity while a pin holds, since "none left" would overrule the person on the same reading. A pin names the current account or nothing (`RotationState.Pinned` compares the
+  two): every switch the policy makes goes through `RotationState.Select`, which releases it (and its
+  hold), and `Store.Remove` drops a pin on the account it removes, so a pin never follows the
+  policy's choice nor comes back into force on its own. Never
   assign `Rotation.CurrentEmail` directly. A long-lived account cannot be polled, so its pin lasts
   until a person picks again or runs `unpin`, which releases the pins and re-applies the policy
   through a monitor tick, as `threshold` does.

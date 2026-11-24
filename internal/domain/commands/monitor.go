@@ -264,6 +264,13 @@ func pollAccount(
 // the shell wrapper's `ensure` installed the primary on the next launch -- so a pick
 // lasted minutes at most. Once the pinned account is exhausted it cannot serve the
 // choice any longer, so the pin is released and the policy moves on as it would have.
+//
+// That holds for an account that had capacity when it was picked. One picked while it
+// already read exhausted is held through that exhaustion: the pick overrules a reading
+// that cannot tell an account at its limit that is still served from one that is
+// refused (see RotationState.PinnedThrough), and every poll until it ends can only
+// repeat it. A failed poll, which leaves the marker as it was, is no reason to release
+// such a pin either. A refusal is (see Store.PinHolds).
 func (c *MonitorCommand) reconcile(
 	pool Pool,
 	store *entities.Store,
@@ -273,8 +280,13 @@ func (c *MonitorCommand) reconcile(
 	log := providerLog(store.Provider)
 	exhausted := store.Rotation.IsExhausted(current.Email, now)
 	if store.Rotation.Pinned() {
-		if !exhausted {
+		switch {
+		case !exhausted:
 			log.Debugf("[ccswitch] keeping %s, which was pinned by hand", current.Email)
+			return
+		case store.PinHolds(now):
+			log.Debugf("[ccswitch] keeping %s, which was pinned by hand over its exhausted reading until %s",
+				current.Email, formatMoment(now, store.Rotation.PinnedThrough))
 			return
 		}
 		store.Rotation.Unpin()

@@ -88,22 +88,63 @@ func TestUseAccountCommandExecute(t *testing.T) {
 			"be polled; `ccswitch unpin` lets the rotation policy choose again\n")
 	})
 
-	t.Run("should warn that the monitor releases the pin on an account it saw exhausted", func(t *testing.T) {
-		t.Parallel()
-		// given
-		recovers := time.Now().Add(recoveryIn)
-		store := twoAccountStore()
-		store.Rotation.MarkExhausted("b@example.com", recovers)
+	t.Run("should hold a pick of an account the monitor read exhausted through that exhaustion",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: an account read at its limit, which may still be served
+			recovers := time.Now().Add(recoveryIn)
+			store := twoAccountStore()
+			store.Rotation.MarkExhausted("b@example.com", recovers)
 
-		// when
-		_, errOut := useOutput(t, store, "b@example.com")
+			// when
+			out, errOut := useOutput(t, store, "b@example.com")
 
-		// then: the pick is honored, since the limits may have reset since the last poll
-		assert.Equal(t, "[ccswitch] WARN: b@example.com is exhausted, available again in 31m ("+
-			momentIn(recovers)+"); unless its limits have reset since, the monitor's next poll releases "+
-			"the pin and rotates away from it\n", errOut)
-		assert.True(t, store.Rotation.Pinned())
-	})
+			// then: the pick overrules the reading, and says who has to move on if it is wrong
+			assert.Equal(t, "[ccswitch] switched to b@example.com\n"+
+				"[ccswitch] pinned through the exhaustion the monitor last read, and after that until it is "+
+				"exhausted again; `ccswitch unpin` lets the rotation policy choose again\n", out)
+			assert.Equal(t, "[ccswitch] WARN: b@example.com last read exhausted, available again in 31m ("+
+				momentIn(recovers)+"); it stays pinned until then regardless, since an account at its limit "+
+				"may still be served -- if claude refuses it, pick another account or run `ccswitch unpin`\n",
+				errOut)
+			assert.True(t, store.Rotation.PinOverridesExhaustion(time.Now()))
+		})
+
+	t.Run("should warn that the monitor releases the pin on an account its provider refused",
+		func(t *testing.T) {
+			t.Parallel()
+			// given: a refusal, not a reading, so the pick cannot overrule it
+			recovers := time.Now().Add(recoveryIn)
+			store := twoAccountStore()
+			store.Accounts[1].LastUsage = &entities.Usage{Blocked: true}
+			store.Rotation.MarkExhausted("b@example.com", recovers)
+
+			// when
+			out, errOut := useOutput(t, store, "b@example.com")
+
+			// then: the pick is honored, since the refusal may have ended since the last poll
+			assert.Contains(t, out, "[ccswitch] pinned until it is exhausted; ")
+			assert.Equal(t, "[ccswitch] WARN: b@example.com is exhausted, available again in 31m ("+
+				momentIn(recovers)+"); unless its limits have reset since, the monitor's next poll releases "+
+				"the pin and rotates away from it\n", errOut)
+			assert.True(t, store.Rotation.Pinned())
+			assert.False(t, store.PinHolds(time.Now()))
+		})
+
+	t.Run("should name the provider's CLI when a Codex account is picked over its exhaustion",
+		func(t *testing.T) {
+			t.Parallel()
+			// given
+			store := twoAccountStore()
+			store.Provider = entities.ProviderCodex
+			store.Rotation.MarkExhausted("b@example.com", time.Now().Add(recoveryIn))
+
+			// when
+			_, errOut := useOutput(t, store, "b@example.com")
+
+			// then
+			assert.Contains(t, errOut, "-- if codex refuses it, pick another account")
+		})
 
 	t.Run("should return an error when the account is not enrolled", func(t *testing.T) {
 		t.Parallel()

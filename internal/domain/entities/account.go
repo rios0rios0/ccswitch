@@ -162,6 +162,21 @@ func (s *Store) NextHealthyAccount(now time.Time) (Account, bool) {
 	return none, false
 }
 
+// PinHolds reports whether the current account stays active through the exhaustion it
+// is marked with, because a person picked it over that exhaustion and the exhaustion has
+// not ended since (see RotationState.PinOverridesExhaustion).
+//
+// A refusal is never held through. An account the endpoint refuses outright (see
+// Usage.Blocked) fails every request, which no pick overrules; what a pick may overrule
+// is a reading at the limit, which cannot tell whether the account is still served.
+func (s *Store) PinHolds(now time.Time) bool {
+	if !s.Rotation.PinOverridesExhaustion(now) {
+		return false
+	}
+	current := s.FindAccount(s.Rotation.CurrentEmail)
+	return current != nil && (current.LastUsage == nil || !current.LastUsage.Blocked)
+}
+
 // currentIndex returns the position of the current account within the ordered
 // slice, or 0 when the current account is unknown.
 func (s *Store) currentIndex(ordered []Account) int {
