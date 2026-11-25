@@ -22,6 +22,16 @@ Exceptions are acceptable depending on the circumstances (critical bug fixes tha
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-25
+
+### Changed
+
+- changed the Go module `github.com/rios0rios0/cliforge` from `v0.5.3` to `v0.5.4`
+
+### Fixed
+
+- fixed the monitor releasing a pin set with `ccswitch use` on its very next poll, even a failed one, when the picked account already read as exhausted; the usage endpoint reads an account at 100% whether Claude Code is still served on it or already refused, so such a pin now holds until that exhaustion ends or a poll finds the account recovered, and `ccswitch capacity` reports capacity meanwhile; a pin on an account its provider refuses outright, as Codex reports, is still released
+
 ## [0.10.1] - 2026-11-18
 
 ### Changed
